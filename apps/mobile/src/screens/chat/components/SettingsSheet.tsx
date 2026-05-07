@@ -38,6 +38,7 @@ import {
   setBiometricEnabled,
 } from '../../../services/biometrics';
 import { ease, duration } from '../../../lib/motion';
+import { track } from '../../../lib/analytics';
 import { relativeTime } from '../../../lib/relativeTime';
 import { Toast } from '../../../components/Toast';
 import { Avatar } from './Avatar';
@@ -223,7 +224,12 @@ export function SettingsSheet({ visible, onCancel }: Props) {
         {
           text: 'Continue',
           style: 'destructive',
-          onPress: () => safeOpen(DELETE_ACCOUNT_URL),
+          onPress: () => {
+            // We track the user-intent click, not the actual server-side
+            // deletion request (that happens on the web flow).
+            track('account_deletion_requested');
+            safeOpen(DELETE_ACCOUNT_URL);
+          },
         },
       ],
     );

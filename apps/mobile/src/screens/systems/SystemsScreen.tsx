@@ -17,6 +17,7 @@ import { Toast } from '../../components/Toast';
 import { SearchSheet } from '../search/SearchSheet';
 import type { MobileSearchResult } from '../../services/search';
 import { haptic } from '../../lib/motion';
+import { track } from '../../lib/analytics';
 
 import { AlertActionSheet } from './components/AlertActionSheet';
 import { FilterChip } from './components/FilterChip';
@@ -30,18 +31,6 @@ import { deriveHeroState } from './heroCopy';
 import { useSystemsData } from './useSystemsData';
 
 type Nav = NativeStackNavigationProp<SystemsStackParamList, 'Systems'>;
-
-function Divider({ color }: { color: string }) {
-  return (
-    <View
-      style={{
-        height: 1,
-        backgroundColor: color,
-        marginLeft: spacing[6],
-      }}
-    />
-  );
-}
 
 // Inline magnifying glass — see SearchSheet for the input-decorating sibling.
 // 16px sizing here matches the right-edge of the Hero copy block.
@@ -127,6 +116,19 @@ export function SystemsScreen() {
     refresh,
     refreshIfStale,
   } = useSystemsData();
+
+  const onRefresh = useCallback(() => {
+    track('systems_pulled_to_refresh');
+    refresh();
+  }, [refresh]);
+
+  const onApplyOrgFilter = useCallback(
+    (orgId: string) => {
+      track('systems_org_filter_applied');
+      setFilterOrgId(orgId);
+    },
+    [setFilterOrgId],
+  );
 
   // Hero stays whole-fleet even when filtered, so the user keeps the
   // global context. Filter affects issues + recent + the orgs section
@@ -260,7 +262,7 @@ export function SystemsScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={refresh}
+            onRefresh={onRefresh}
             tintColor={theme.brand}
           />
         }
@@ -302,14 +304,14 @@ export function SystemsScreen() {
           <>
             <SectionHeader label="ACTIVE ISSUES" />
             {activeIssues.map((alert, idx) => (
-              <View key={alert.id}>
-                <IssueRow
-                  alert={alert}
-                  onPress={() => onPressIssue(alert)}
-                  onLongPress={() => onLongPressAlert(alert)}
-                />
-                {idx < activeIssues.length - 1 ? <Divider color={theme.border} /> : null}
-              </View>
+              <IssueRow
+                key={alert.id}
+                alert={alert}
+                onPress={() => onPressIssue(alert)}
+                onLongPress={() => onLongPressAlert(alert)}
+                showDivider={idx < activeIssues.length - 1}
+                dividerColor={theme.border}
+              />
             ))}
           </>
         ) : null}
@@ -318,10 +320,13 @@ export function SystemsScreen() {
           <>
             <SectionHeader label="ORGANIZATIONS" />
             {orgRollups.map((org, idx) => (
-              <View key={org.id}>
-                <OrgRow org={org} onPress={() => setFilterOrgId(org.id)} />
-                {idx < orgRollups.length - 1 ? <Divider color={theme.border} /> : null}
-              </View>
+              <OrgRow
+                key={org.id}
+                org={org}
+                onPress={() => onApplyOrgFilter(org.id)}
+                showDivider={idx < orgRollups.length - 1}
+                dividerColor={theme.border}
+              />
             ))}
           </>
         ) : null}
@@ -330,14 +335,14 @@ export function SystemsScreen() {
           <>
             <SectionHeader label="RECENT (24H)" />
             {recent.map((alert, idx) => (
-              <View key={alert.id}>
-                <RecentRow
-                  alert={alert}
-                  onPress={() => onPressIssue(alert)}
-                  onLongPress={() => onLongPressAlert(alert)}
-                />
-                {idx < recent.length - 1 ? <Divider color={theme.border} /> : null}
-              </View>
+              <RecentRow
+                key={alert.id}
+                alert={alert}
+                onPress={() => onPressIssue(alert)}
+                onLongPress={() => onLongPressAlert(alert)}
+                showDivider={idx < recent.length - 1}
+                dividerColor={theme.border}
+              />
             ))}
           </>
         ) : null}

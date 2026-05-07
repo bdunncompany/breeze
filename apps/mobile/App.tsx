@@ -16,6 +16,21 @@ Sentry.init({
   enableNative: true,
 });
 
+// Initialize PostHog after Sentry so any throw inside analytics setup is
+// captured by Sentry. The analytics module gates itself on
+// EXPO_PUBLIC_POSTHOG_KEY + !__DEV__, so this is a no-op without config.
+//
+// PostHog identifies the user with their userId + traits (email, name).
+// App Store Connect privacy form must declare:
+//   - Email Address: linked to identity, App Functionality + Analytics
+//   - Crash Data: already declared (Sentry)
+//   - Diagnostics: already declared (Sentry)
+//   - Product Interaction: linked to identity, Analytics
+// PostHog does not use IDFA → App Tracking Transparency NOT required.
+import { initAnalytics, track } from './src/lib/analytics';
+initAnalytics();
+track('app_opened');
+
 import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as Font from 'expo-font';

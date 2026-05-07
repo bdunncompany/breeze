@@ -14,10 +14,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 
 import {
-  fontFamily,
   palette,
   radii,
   spacing,
@@ -25,6 +23,17 @@ import {
   useApprovalTheme,
 } from '../../theme';
 import { duration, ease, haptic } from '../../lib/motion';
+import { track } from '../../lib/analytics';
+import { CountdownRing } from '../approvals/components/CountdownRing';
+import { RequesterRow } from '../approvals/components/RequesterRow';
+import { ActionHeadline } from '../approvals/components/ActionHeadline';
+import { RiskBand } from '../approvals/components/RiskBand';
+import { UserMessage } from '../chat/components/UserMessage';
+import { AiMessage } from '../chat/components/AiMessage';
+import { Hero } from '../systems/components/Hero';
+import { IssueRow } from '../systems/components/IssueRow';
+import type { Alert } from '../../services/api';
+import type { ChatMessage } from '../../store/aiChatSlice';
 
 interface Props {
   onComplete: () => void;
@@ -50,8 +59,9 @@ export function OnboardingScreen({ onComplete }: Props) {
     if (next !== page) setPage(next);
   }
 
-  function finish() {
+  function finish(path: 'completed' | 'skipped') {
     haptic.approve();
+    track('onboarding_completed', { path });
     onComplete();
   }
 
@@ -65,7 +75,7 @@ export function OnboardingScreen({ onComplete }: Props) {
           zIndex: 10,
         }}
       >
-        <Pressable onPress={finish} hitSlop={12} accessibilityLabel="Skip onboarding">
+        <Pressable onPress={() => finish('skipped')} hitSlop={12} accessibilityLabel="Skip onboarding">
           <Text style={[type.metaCaps, { color: theme.textMd }]}>SKIP</Text>
         </Pressable>
       </View>
@@ -132,7 +142,7 @@ export function OnboardingScreen({ onComplete }: Props) {
 
         {page === PAGE_COUNT - 1 ? (
           <Pressable
-            onPress={finish}
+            onPress={() => finish('completed')}
             accessibilityLabel="Get started"
             style={({ pressed }) => ({
               backgroundColor: pressed ? palette.brand.deep : palette.brand.base,
@@ -246,10 +256,19 @@ function Dot({ active, onPress }: { active: boolean; onPress: () => void }) {
   );
 }
 
-// --- Stylized previews ---------------------------------------------------
+// --- Real-component previews --------------------------------------------
 
+// Page 1: a faithful, downscaled mock of ApprovalScreen. Composes the same
+// primitives (CountdownRing, RequesterRow, ActionHeadline, RiskBand) plus
+// a static visual of the Approve/Deny pair so we don't pull in the
+// biometric machinery from the real ApprovalButtons.
 function ApprovalPreview() {
   const theme = useApprovalTheme('dark');
+  // Push expiresAt 60s out so CountdownRing renders at full and ticks down
+  // gently while the user reads. Recompute on each mount via useState.
+  const [expiresAt] = useState(() => new Date(Date.now() + 60_000).toISOString());
+  const [createdAt] = useState(() => new Date().toISOString());
+
   return (
     <View
       style={{
@@ -257,61 +276,46 @@ function ApprovalPreview() {
         borderRadius: radii.xl,
         borderWidth: 1,
         borderColor: theme.border,
-        padding: spacing[5],
+        // Negative horizontal margin lets the inner components keep their
+        // native paddingHorizontal: spacing[6] without doubling up.
+        paddingVertical: spacing[5],
+        marginHorizontal: spacing[2],
+        overflow: 'hidden',
       }}
     >
       <View
         style={{
-          flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          paddingTop: spacing[2],
         }}
       >
-        <StaticRing />
-        <View
-          style={{
-            paddingHorizontal: spacing[3],
-            paddingVertical: spacing[1],
-            borderRadius: radii.full,
-            backgroundColor: palette.warning.base,
-          }}
-        >
-          <Text style={[type.metaCaps, { color: palette.warning.onBase }]}>
-            MEDIUM RISK
-          </Text>
-        </View>
+        <CountdownRing expiresAt={expiresAt} size={64} stroke={3} />
       </View>
 
-      <Text
-        style={[
-          type.title,
-          { color: theme.textHi, marginTop: spacing[5] },
-        ]}
-      >
-        Restart the print server.
-      </Text>
-      <Text
-        style={[type.meta, { color: theme.textMd, marginTop: spacing[2] }]}
-      >
-        Requested by Claude · 8s ago
-      </Text>
+      <RequesterRow
+        clientLabel="Claude · Todd's Mac"
+        machineLabel="dahlia-prod-01"
+        createdAt={createdAt}
+      />
+
+      <ActionHeadline action="Delete 4 devices in Acme Corp" />
+
+      <RiskBand tier="high" summary="Reversible within 30 days" />
 
       <View
         style={{
-          marginTop: spacing[5],
-          borderTopWidth: 1,
-          borderTopColor: theme.border,
-          paddingTop: spacing[4],
           flexDirection: 'row',
+          paddingHorizontal: spacing[6],
           gap: spacing[3],
+          marginTop: spacing[6],
         }}
       >
         <View
           style={{
             flex: 1,
-            backgroundColor: theme.bg2,
+            paddingVertical: spacing[5],
             borderRadius: radii.lg,
-            paddingVertical: spacing[4],
+            backgroundColor: theme.bg2,
             alignItems: 'center',
           }}
         >
@@ -320,168 +324,108 @@ function ApprovalPreview() {
         <View
           style={{
             flex: 1.4,
-            backgroundColor: palette.approve.base,
+            paddingVertical: spacing[5],
             borderRadius: radii.lg,
-            paddingVertical: spacing[4],
+            backgroundColor: theme.approve,
             alignItems: 'center',
           }}
         >
-          <Text style={[type.bodyMd, { color: palette.approve.onBase }]}>
-            Approve
-          </Text>
+          <Text style={[type.bodyMd, { color: palette.approve.onBase }]}>Approve</Text>
         </View>
       </View>
     </View>
   );
 }
 
-function StaticRing() {
-  // Static visual analogue of the CountdownRing on ApprovalScreen — same
-  // geometry, fixed at ~70% remaining so the brand arc reads as confident.
-  const size = 56;
-  const stroke = 3;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const remaining = 0.7;
-  return (
-    <Svg width={size} height={size}>
-      <Circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        stroke={palette.dark.bg3}
-        strokeWidth={stroke}
-        fill="none"
-      />
-      <Circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        stroke={palette.brand.base}
-        strokeWidth={stroke}
-        fill="none"
-        strokeLinecap="round"
-        strokeDasharray={`${circumference} ${circumference}`}
-        strokeDashoffset={circumference * (1 - remaining)}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </Svg>
-  );
-}
-
+// Page 2: real UserMessage + AiMessage, fed a static ChatMessage with one
+// in-flight tool event so the ToolIndicator + StreamingPulse render
+// naturally. A static composer mock sits below.
 function ChatPreview() {
   const theme = useApprovalTheme('dark');
+
+  const aiMessage: Extract<ChatMessage, { role: 'assistant' }> = {
+    id: 'onboarding-ai-1',
+    role: 'assistant',
+    content: 'Here are 4 devices.',
+    toolEvents: [
+      {
+        toolUseId: 'onboarding-tool-1',
+        toolName: 'query_devices',
+        state: 'started',
+      },
+    ],
+    sentAt: new Date().toISOString(),
+    isStreaming: true,
+  };
+
   return (
-    <View style={{ gap: spacing[3] }}>
-      <View
-        style={{
-          alignSelf: 'flex-end',
-          maxWidth: '80%',
-          backgroundColor: palette.brand.deep,
-          borderRadius: radii.lg,
-          paddingVertical: spacing[3],
-          paddingHorizontal: spacing[4],
-        }}
-      >
-        <Text style={[type.body, { color: palette.dark.textHi }]}>
-          Any Windows servers offline this morning?
-        </Text>
+    <View>
+      <View style={{ marginHorizontal: -spacing[6] }}>
+        <UserMessage content="Show me devices in Acme Corp" />
+        <AiMessage
+          message={aiMessage}
+          inFlightTool={{ toolUseId: 'onboarding-tool-1', toolName: 'query_devices' }}
+        />
       </View>
 
+      {/* Static composer mock — visual stand-in for the real Composer so we
+          don't pull in voice/network state during onboarding. */}
       <View
         style={{
-          alignSelf: 'flex-start',
-          maxWidth: '85%',
+          marginTop: spacing[6],
+          flexDirection: 'row',
+          alignItems: 'center',
           backgroundColor: theme.bg1,
-          borderRadius: radii.lg,
-          paddingVertical: spacing[3],
-          paddingHorizontal: spacing[4],
+          borderRadius: radii.full,
           borderWidth: 1,
           borderColor: theme.border,
+          paddingVertical: spacing[3],
+          paddingHorizontal: spacing[5],
         }}
       >
-        <Text
-          style={[
-            type.metaCaps,
-            { color: palette.brand.soft, marginBottom: spacing[1] },
-          ]}
-        >
-          BREEZE
-        </Text>
-        <Text style={[type.body, { color: theme.textHi }]}>
-          Two servers stopped checking in. PRINT-01 since 06:42, BACKUP-03 since
-          07:14.
-        </Text>
+        <Text style={[type.body, { color: theme.textLo, flex: 1 }]}>Ask Breeze.</Text>
         <View
           style={{
-            marginTop: spacing[3],
-            backgroundColor: theme.bg2,
-            borderRadius: radii.md,
-            padding: spacing[3],
+            width: 28,
+            height: 28,
+            borderRadius: radii.full,
+            backgroundColor: palette.brand.base,
           }}
-        >
-          <Text
-            style={[
-              { fontFamily: fontFamily.mono, fontSize: 13, lineHeight: 18 },
-              { color: theme.textMd },
-            ]}
-          >
-            list_devices · status=offline
-          </Text>
-        </View>
-      </View>
-
-      <View
-        style={{
-          alignSelf: 'flex-start',
-          flexDirection: 'row',
-          gap: 6,
-          paddingVertical: spacing[2],
-          paddingHorizontal: spacing[3],
-        }}
-      >
-        <Pulse delay={0} />
-        <Pulse delay={120} />
-        <Pulse delay={240} />
+        />
       </View>
     </View>
   );
 }
 
-function Pulse({ delay }: { delay: number }) {
-  // A staggered fade-in gives the chat preview a "thinking" feel without
-  // ever spelling the word. One-shot timing on mount — Reanimated cleans
-  // up the shared value when this component unmounts.
-  const opacity = useSharedValue(0.3);
-
-  useEffect(() => {
-    const id = setTimeout(() => {
-      opacity.value = withTiming(1, { duration: 600, easing: ease });
-    }, delay);
-    return () => clearTimeout(id);
-  }, [delay]);
-
-  const style = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
-
-  return (
-    <Animated.View
-      style={[
-        {
-          width: 6,
-          height: 6,
-          borderRadius: radii.full,
-          backgroundColor: palette.brand.soft,
-        },
-        style,
-      ]}
-    />
-  );
-}
-
+// Page 3: real Hero + a couple of IssueRow entries to give the page body.
 function SystemsPreview() {
   const theme = useApprovalTheme('dark');
+
+  const issues: Alert[] = [
+    {
+      id: 'onboarding-alert-1',
+      title: 'Disk usage critical on PRINT-01',
+      message: 'Disk usage at 96%',
+      severity: 'critical',
+      type: 'disk',
+      deviceName: 'PRINT-01 · Acme Corp',
+      acknowledged: false,
+      createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+      updatedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+    },
+    {
+      id: 'onboarding-alert-2',
+      title: 'Backup failed on BACKUP-03',
+      message: 'Last successful backup 38 hours ago',
+      severity: 'high',
+      type: 'backup',
+      deviceName: 'BACKUP-03 · Acme Corp',
+      acknowledged: false,
+      createdAt: new Date(Date.now() - 47 * 60_000).toISOString(),
+      updatedAt: new Date(Date.now() - 47 * 60_000).toISOString(),
+    },
+  ];
+
   return (
     <View
       style={{
@@ -489,99 +433,35 @@ function SystemsPreview() {
         borderRadius: radii.xl,
         borderWidth: 1,
         borderColor: theme.border,
-        padding: spacing[5],
+        paddingVertical: spacing[5],
+        marginHorizontal: spacing[2],
+        overflow: 'hidden',
       }}
     >
-      <Text style={[type.metaCaps, { color: theme.textMd }]}>FLEET HEALTH</Text>
-      <Text
-        style={[
-          type.title,
-          { color: theme.textHi, marginTop: spacing[2] },
-        ]}
-      >
-        118 of 124 healthy.
-      </Text>
-
-      <View
-        style={{
-          marginTop: spacing[4],
-          height: 6,
-          flexDirection: 'row',
-          borderRadius: radii.full,
-          overflow: 'hidden',
-          backgroundColor: theme.bg3,
-        }}
-      >
-        <View style={{ flex: 118, backgroundColor: palette.approve.base }} />
-        <View style={{ flex: 4, backgroundColor: palette.warning.base }} />
-        <View style={{ flex: 2, backgroundColor: palette.deny.base }} />
-      </View>
-
-      <View
-        style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          marginTop: spacing[3],
-        }}
-      >
-        <Legend color={palette.approve.base} label="118 healthy" />
-        <Legend color={palette.warning.base} label="4 warning" />
-        <Legend color={palette.deny.base} label="2 critical" />
+      {/* Hero already pads horizontally by spacing[6]; the wrapping card
+          adds visual containment without doubling padding. */}
+      <View style={{ marginHorizontal: -spacing[6] + spacing[2] }}>
+        <Hero
+          copy="12 issues across 3 organizations."
+          segments={{ healthy: 380, warning: 30, critical: 12 }}
+          legend="380 online · 42 offline"
+          loading={false}
+        />
       </View>
 
       <View
         style={{
           marginTop: spacing[5],
-          paddingTop: spacing[4],
+          paddingTop: spacing[2],
           borderTopWidth: 1,
           borderTopColor: theme.border,
+          marginHorizontal: -spacing[6] + spacing[2],
         }}
       >
-        <Row label="Active alerts" value="6" tone={theme.textHi} />
-        <Row label="Pending patches" value="42" tone={theme.textMd} />
-        <Row label="Last sync" value="2m ago" tone={theme.textMd} />
+        {issues.map((alert) => (
+          <IssueRow key={alert.id} alert={alert} onPress={() => {}} />
+        ))}
       </View>
-    </View>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  const theme = useApprovalTheme('dark');
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-      <View
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: radii.full,
-          backgroundColor: color,
-        }}
-      />
-      <Text style={[type.meta, { color: theme.textMd }]}>{label}</Text>
-    </View>
-  );
-}
-
-function Row({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: string;
-}) {
-  const theme = useApprovalTheme('dark');
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingVertical: spacing[2],
-      }}
-    >
-      <Text style={[type.body, { color: theme.textMd }]}>{label}</Text>
-      <Text style={[type.bodyMd, { color: tone }]}>{value}</Text>
     </View>
   );
 }

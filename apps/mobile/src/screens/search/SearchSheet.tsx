@@ -11,6 +11,7 @@ import Svg, { Circle, Line } from 'react-native-svg';
 
 import { useApprovalTheme, palette, radii, spacing, type } from '../../theme';
 import type { MobileSearchResult } from '../../services/search';
+import { track } from '../../lib/analytics';
 import { useSearch } from './useSearch';
 
 interface Props {
@@ -175,7 +176,20 @@ export function SearchSheet({ visible, onCancel, onSelect }: Props) {
     return () => clearTimeout(t);
   }, [visible, clear]);
 
+  // Fire `search_query` once per (trimmed) query that lands a non-loading
+  // resolution — captures both successful searches and "no matches yet".
+  // We dedupe on the resolved query so a re-render doesn't re-fire.
+  const lastTrackedQueryRef = useRef<string | null>(null);
+  useEffect(() => {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery || loading || error) return;
+    if (lastTrackedQueryRef.current === trimmedQuery) return;
+    lastTrackedQueryRef.current = trimmedQuery;
+    track('search_query', { result_count: results.length });
+  }, [query, loading, error, results.length]);
+
   const handleSelect = (result: MobileSearchResult) => {
+    track('search_result_tapped', { kind: result.kind });
     onSelect(result);
   };
 

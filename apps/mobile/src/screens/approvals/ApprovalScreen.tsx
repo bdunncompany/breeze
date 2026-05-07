@@ -13,6 +13,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { approve, deny, markExpired, reportSuspicious } from '../../store/approvalsSlice';
 import { useApprovalTheme, type, spacing, palette } from '../../theme';
 import { duration, ease, haptic } from '../../lib/motion';
+import { track } from '../../lib/analytics';
 
 import { CountdownRing } from './components/CountdownRing';
 import { RequesterRow } from './components/RequesterRow';
@@ -43,6 +44,30 @@ export function ApprovalScreen() {
   const [reportSheetOpen, setReportSheetOpen] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const expiredHandledRef = useRef<string | null>(null);
+
+  // When does the user "see" the approval? When ApprovalScreen mounts onto a
+  // focused approval — that's the takeover moment. We stamp it per approval
+  // id so the seconds_to_decide reading on approve/deny is keyed to the
+  // takeover mount, not to a re-render.
+  const focusedAtRef = useRef<{ id: string; ts: number } | null>(null);
+  useEffect(() => {
+    if (!focused) {
+      focusedAtRef.current = null;
+      return;
+    }
+    if (focusedAtRef.current?.id !== focused.id) {
+      focusedAtRef.current = { id: focused.id, ts: Date.now() };
+      // Approval is now visible to the user. risk_tier is the only
+      // property — we deliberately exclude actionLabel/arguments/host.
+      track('approval_received', { risk_tier: focused.riskTier });
+    }
+  }, [focused]);
+
+  function secondsToDecide(approvalId: string): number | undefined {
+    const stamp = focusedAtRef.current;
+    if (!stamp || stamp.id !== approvalId) return undefined;
+    return Math.round((Date.now() - stamp.ts) / 1000);
+  }
 
   // Data lifecycle lives in ApprovalGate; this mount owns entrance animation + arrival haptic.
   useEffect(() => {
@@ -87,10 +112,18 @@ export function ApprovalScreen() {
       withTiming(0, { duration: 600, easing: ease })
     );
     haptic.approve();
-    dispatch(approve(focused.id))
+    const approvalSnap = focused;
+    const decideSeconds = secondsToDecide(approvalSnap.id);
+    dispatch(approve(approvalSnap.id))
       .unwrap()
       .then(() => {
-        setToast({ kind: 'success', text: `Approved · ${focused.actionLabel}` });
+        track('approval_decided', {
+          decision: 'approve',
+          risk_tier: approvalSnap.riskTier,
+          is_recursive: approvalSnap.isRecursive,
+          seconds_to_decide: decideSeconds,
+        });
+        setToast({ kind: 'success', text: `Approved · ${approvalSnap.actionLabel}` });
       })
       .catch((err: Error) => {
         setToast({ kind: 'error', text: messageForDecisionError(err.message, 'Approve') });
@@ -105,9 +138,17 @@ export function ApprovalScreen() {
       withTiming(0, { duration: 40 })
     );
     haptic.deny();
-    dispatch(deny({ id: focused.id, reason }))
+    const approvalSnap = focused;
+    const decideSeconds = secondsToDecide(approvalSnap.id);
+    dispatch(deny({ id: approvalSnap.id, reason }))
       .unwrap()
       .then(() => {
+        track('approval_decided', {
+          decision: 'deny',
+          risk_tier: approvalSnap.riskTier,
+          is_recursive: approvalSnap.isRecursive,
+          seconds_to_decide: decideSeconds,
+        });
         setToast({ kind: 'error', text: 'Denied · logged' });
       })
       .catch((err: Error) => {
@@ -128,6 +169,7 @@ export function ApprovalScreen() {
     dispatch(reportSuspicious(focused.id))
       .unwrap()
       .then(() => {
+        track('approval_reported_suspicious');
         setReportSheetOpen(false);
         setReportBusy(false);
         setToast({ kind: 'success', text: 'Reported. Session revoked.' });

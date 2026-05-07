@@ -16,6 +16,7 @@ import { haptic } from '../../../lib/motion';
 import { useNetworkConnected } from '../../../lib/useNetworkConnected';
 import { useVoiceInput } from '../../../lib/useVoiceInput';
 import { errorMessage, isListening } from '../../../lib/voiceState';
+import { track } from '../../../lib/analytics';
 
 interface Props {
   disabled?: boolean;
@@ -99,6 +100,9 @@ export function Composer({ disabled, placeholder, onSend, draft, onDraftConsumed
       // Add a space between an existing draft and the new utterance.
       return `${prev}${prev.endsWith(' ') ? '' : ' '}${spoken}`;
     });
+    // We log the structural fact a voice utterance landed — not its
+    // content. See analytics.ts privacy notes.
+    track('chat_voice_used');
   }, []);
 
   const voice = useVoiceInput({ offline: !connected, onTranscript: handleTranscript });

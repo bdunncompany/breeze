@@ -93,6 +93,13 @@ vi.mock('../../middleware/auth', () => ({
     return next();
   }),
   requireMfa: vi.fn(() => async (_c: any, next: any) => next()),
+  requirePermission: vi.fn(() => async (_c: any, next: any) => next()),
+}));
+
+vi.mock('../../services/permissions', () => ({
+  PERMISSIONS: {
+    USERS_WRITE: { resource: 'users', action: 'write' },
+  },
 }));
 
 vi.mock('./helpers', async () => {

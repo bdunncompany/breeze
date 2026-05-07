@@ -36,6 +36,7 @@ export const accountDeletionRequests = pgTable(
     processBy: timestamp('process_by', { withTimezone: true }).notNull(),
     processedAt: timestamp('processed_at', { withTimezone: true }),
     processedBy: uuid('processed_by').references(() => users.id, { onDelete: 'set null' }),
+    adminNote: text('admin_note'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

@@ -10,6 +10,7 @@ import {
   revokeConnectedApp,
   type ConnectedApp,
 } from '../services/connectedApps';
+import { track } from '../lib/analytics';
 
 interface LifecycleState {
   devices: PairedMobileDevice[];
@@ -123,6 +124,10 @@ const lifecycleSlice = createSlice({
         if (i !== -1) {
           const existing = state.devices[i];
           if (existing) {
+            // was_current_device tells us whether the user revoked the
+            // phone in their hand vs. another paired device. We don't
+            // emit the device id or hostname.
+            track('device_revoked', { was_current_device: existing.isCurrent === true });
             state.devices[i] = {
               ...existing,
               status: 'blocked',
@@ -156,6 +161,7 @@ const lifecycleSlice = createSlice({
         if (i !== -1) {
           const existing = state.apps[i];
           if (existing) {
+            track('oauth_client_revoked');
             state.apps[i] = { ...existing, revokedAt: new Date().toISOString() };
           }
         }

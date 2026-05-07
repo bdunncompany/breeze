@@ -13,6 +13,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { securityMiddleware } from './middleware/security';
 import { globalRateLimit } from './middleware/globalRateLimit';
 import { authRoutes } from './routes/auth';
+import { accountDeletionAdminRoutes } from './routes/auth/accountDeletion';
 import { configRoutes } from './routes/config';
 import { externalServicesRoutes } from './routes/externalServices';
 import { agentRoutes } from './routes/agents';
@@ -784,6 +785,7 @@ api.route('/', m365CallbackRoute); // Public callback (no auth) — must precede
 api.route('/c2c', c2cRoutes);
 api.route('/dr', drRoutes);
 api.route('/admin', adminRoutes);
+api.route('/admin', accountDeletionAdminRoutes);
 
 app.route('/api/v1', api);
 

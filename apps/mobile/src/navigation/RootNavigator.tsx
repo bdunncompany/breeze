@@ -8,6 +8,7 @@ import { setCredentials, logout, logoutAsync } from '../store/authSlice';
 import { getStoredToken, getStoredUser, clearAuthData } from '../services/auth';
 import { getCurrentUser, onDeviceBlocked } from '../services/api';
 import { spacing, type } from '../theme';
+import { identify as analyticsIdentify, reset as analyticsReset } from '../lib/analytics';
 import {
   getOnboardingCompleted,
   setOnboardingCompleted,
@@ -44,11 +45,15 @@ export function RootNavigator() {
 
   // Attribute Sentry events to the signed-in user. Cleared on sign-out so
   // crashes after logout are not falsely attributed to the previous account.
+  // PostHog identify/reset mirror this so analytics events join the right
+  // person on the server side.
   useEffect(() => {
     if (user) {
       Sentry.setUser({ id: user.id, email: user.email });
+      analyticsIdentify(user.id, { email: user.email, name: user.name });
     } else {
       Sentry.setUser(null);
+      analyticsReset();
     }
   }, [user]);
 

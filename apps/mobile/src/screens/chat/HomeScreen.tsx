@@ -35,6 +35,7 @@ import {
 
 import { fetchAlerts } from '../../store/alertsSlice';
 import { fetchOne as fetchApprovalOne, setFocus as setApprovalFocus } from '../../store/approvalsSlice';
+import { track } from '../../lib/analytics';
 import { ChatHeader } from './components/ChatHeader';
 import { ColdOpenChips } from './components/ColdOpenChips';
 import { Composer } from './components/Composer';
@@ -176,6 +177,8 @@ export function HomeScreen() {
       const userMessageId = `m-${Date.now()}-u`;
       lastUserContentRef.current = text;
       dispatch(addUserMessage({ id: userMessageId, content: text, sentAt: new Date().toISOString() }));
+      // Length only — never the message body. See analytics.ts privacy notes.
+      track('chat_message_sent', { length: text.length });
 
       let sid = sessionId;
       if (!sid) {
@@ -184,6 +187,7 @@ export function HomeScreen() {
           const session = await createAiSession({});
           sid = session.id;
           dispatch(sessionCreated({ sessionId: sid }));
+          track('chat_session_created');
         } catch (err) {
           dispatch(setStatus('error'));
           const errMsg = err instanceof Error ? err.message : 'Could not start a session.';
