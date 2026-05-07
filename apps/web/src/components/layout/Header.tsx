@@ -10,6 +10,8 @@ import {
   Settings,
   Key,
   Shield,
+  Smartphone,
+  Plug,
   Activity,
   Sparkles,
   BookOpen,
@@ -352,6 +354,22 @@ export default function Header() {
                 >
                   <Key className="h-4 w-4 text-muted-foreground" />
                   <span>API Keys</span>
+                </a>
+                <a
+                  href="/account/devices"
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition hover:bg-muted"
+                  onClick={() => setShowUserMenu(false)}
+                >
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  <span>Trusted devices</span>
+                </a>
+                <a
+                  href="/account/connected-apps"
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition hover:bg-muted"
+                  onClick={() => setShowUserMenu(false)}
+                >
+                  <Plug className="h-4 w-4 text-muted-foreground" />
+                  <span>Connected apps</span>
                 </a>
                 {features.billing && (
                   <button

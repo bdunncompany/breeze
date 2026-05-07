@@ -31,8 +31,11 @@ import { PERMISSIONS } from '../services/permissions';
  *   - POST   /me/mobile-devices/:id/block            self-revoke a paired phone
  *   - GET    /me/oauth-clients                       list calling user's authorized OAuth clients
  *   - POST   /me/oauth-clients/:clientId/revoke      self-revoke an OAuth client
+ *   - GET    /admin/users/:userId/mobile-devices                       list a target user's devices
  *   - POST   /admin/users/:userId/mobile-devices/:id/block             admin block on behalf of user
+ *   - GET    /admin/orgs/:orgId/oauth-clients                          list connected apps in scope
  *   - POST   /admin/orgs/:orgId/oauth-clients/:clientId/block-globally org-wide OAuth client block
+ *   - POST   /admin/orgs/:orgId/oauth-clients/:clientId/unblock-globally clear an org-wide block
  *
  * "Admin" here is org/partner admin (USERS_WRITE permission), not platform
  * admin. See `/api/v1/admin/*` for platform-admin (cross-tenant) actions.
@@ -710,6 +713,235 @@ lifecycleAdminRoutes.post(
       },
       201
     );
+  }
+);
+
+// ============================================================
+// Admin: list a target user's mobile devices
+// ============================================================
+
+lifecycleAdminRoutes.get(
+  '/admin/users/:userId/mobile-devices',
+  requireUsersWrite,
+  async (c) => {
+    const auth = c.get('auth');
+    const userId = c.req.param('userId')!;
+
+    if (!/^[0-9a-fA-F-]{36}$/.test(userId)) {
+      return c.json({ error: 'Invalid userId' }, 400);
+    }
+
+    const ok = await adminCanReachUser(auth, userId);
+    if (!ok) {
+      return c.json({ error: 'User not in your tenant' }, 403);
+    }
+
+    const rows = await asSystem(() =>
+      db
+        .select({
+          id: mobileDevices.id,
+          deviceId: mobileDevices.deviceId,
+          platform: mobileDevices.platform,
+          model: mobileDevices.model,
+          osVersion: mobileDevices.osVersion,
+          appVersion: mobileDevices.appVersion,
+          lastActiveAt: mobileDevices.lastActiveAt,
+          status: mobileDevices.status,
+          blockedAt: mobileDevices.blockedAt,
+          blockedReason: mobileDevices.blockedReason,
+          createdAt: mobileDevices.createdAt,
+        })
+        .from(mobileDevices)
+        .where(eq(mobileDevices.userId, userId))
+        .orderBy(
+          sql`CASE WHEN ${mobileDevices.status} = 'active' THEN 0 ELSE 1 END`,
+          desc(mobileDevices.lastActiveAt),
+          desc(mobileDevices.createdAt)
+        )
+    );
+
+    return c.json({
+      devices: rows.map((r) => ({
+        id: r.id,
+        deviceId: r.deviceId,
+        platform: r.platform,
+        model: r.model,
+        osVersion: r.osVersion,
+        appVersion: r.appVersion,
+        lastActiveAt: r.lastActiveAt?.toISOString() ?? null,
+        status: r.status,
+        blockedAt: r.blockedAt?.toISOString() ?? null,
+        blockedReason: r.blockedReason,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  }
+);
+
+// ============================================================
+// Admin: list connected apps in scope, with usage stats + active block
+// ============================================================
+
+lifecycleAdminRoutes.get(
+  '/admin/orgs/:orgId/oauth-clients',
+  requireUsersWrite,
+  async (c) => {
+    const auth = c.get('auth');
+    const orgId = c.req.param('orgId')!;
+
+    if (!/^[0-9a-fA-F-]{36}$/.test(orgId)) {
+      return c.json({ error: 'Invalid orgId' }, 400);
+    }
+
+    if (typeof auth.canAccessOrg === 'function' && !auth.canAccessOrg(orgId) && auth.scope !== 'system') {
+      return c.json({ error: 'Organization not in scope' }, 403);
+    }
+
+    const [org] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1);
+    if (!org) {
+      return c.json({ error: 'Organization not found' }, 404);
+    }
+
+    // Find every active grant from a user that belongs to this org, joined to
+    // client metadata. A user can carry membership in multiple orgs; scope to
+    // memberships only.
+    const grantRows = await asSystem(() =>
+      db
+        .select({
+          clientId: oauthGrants.clientId,
+          accountId: oauthGrants.accountId,
+          revokedAt: oauthGrants.revokedAt,
+          createdAt: oauthGrants.createdAt,
+          clientName: oauthClients.metadata,
+          clientLastUsedAt: oauthClients.lastUsedAt,
+          clientCreatedAt: oauthClients.createdAt,
+        })
+        .from(oauthGrants)
+        .innerJoin(oauthClients, eq(oauthClients.id, oauthGrants.clientId))
+        .innerJoin(organizationUsers, eq(organizationUsers.userId, oauthGrants.accountId))
+        .where(eq(organizationUsers.orgId, orgId))
+    );
+
+    // Fold per-client.
+    type Agg = {
+      clientId: string;
+      displayName: string;
+      activeUserIds: Set<string>;
+      everUserIds: Set<string>;
+      clientCreatedAt: Date;
+      lastUsedAt: Date | null;
+    };
+    const byClient = new Map<string, Agg>();
+    for (const row of grantRows) {
+      const meta = (row.clientName as { client_name?: string } | null) ?? null;
+      const displayName = meta?.client_name ?? row.clientId;
+      let agg = byClient.get(row.clientId);
+      if (!agg) {
+        agg = {
+          clientId: row.clientId,
+          displayName,
+          activeUserIds: new Set(),
+          everUserIds: new Set(),
+          clientCreatedAt: row.clientCreatedAt,
+          lastUsedAt: row.clientLastUsedAt,
+        };
+        byClient.set(row.clientId, agg);
+      }
+      agg.everUserIds.add(row.accountId);
+      if (row.revokedAt === null) agg.activeUserIds.add(row.accountId);
+    }
+
+    // Active org-wide block status per client.
+    const blocks = await db
+      .select()
+      .from(oauthClientBlocks)
+      .where(eq(oauthClientBlocks.orgId, orgId));
+    const now = new Date();
+    const blockByClient = new Map<string, { blockedAt: Date; blockedUntil: Date | null; blockedReason: string | null }>();
+    for (const b of blocks) {
+      const active = b.blockedUntil === null || b.blockedUntil.getTime() > now.getTime();
+      if (!active) continue;
+      blockByClient.set(b.clientId, {
+        blockedAt: b.blockedAt,
+        blockedUntil: b.blockedUntil,
+        blockedReason: b.blockedReason,
+      });
+    }
+
+    return c.json({
+      orgId,
+      clients: Array.from(byClient.values()).map((a) => {
+        const blk = blockByClient.get(a.clientId) ?? null;
+        return {
+          clientId: a.clientId,
+          displayName: a.displayName,
+          activeUserCount: a.activeUserIds.size,
+          totalUserCount: a.everUserIds.size,
+          clientCreatedAt: a.clientCreatedAt.toISOString(),
+          lastUsedAt: a.lastUsedAt?.toISOString() ?? null,
+          block: blk
+            ? {
+                blockedAt: blk.blockedAt.toISOString(),
+                blockedUntil: blk.blockedUntil?.toISOString() ?? null,
+                blockedReason: blk.blockedReason,
+              }
+            : null,
+        };
+      }),
+    });
+  }
+);
+
+// ============================================================
+// Admin: clear an org-wide OAuth client block
+// ============================================================
+
+lifecycleAdminRoutes.post(
+  '/admin/orgs/:orgId/oauth-clients/:clientId/unblock-globally',
+  requireUsersWrite,
+  async (c) => {
+    const auth = c.get('auth');
+    const orgId = c.req.param('orgId')!;
+    const clientId = c.req.param('clientId')!;
+
+    if (!/^[0-9a-fA-F-]{36}$/.test(orgId)) {
+      return c.json({ error: 'Invalid orgId' }, 400);
+    }
+
+    if (typeof auth.canAccessOrg === 'function' && !auth.canAccessOrg(orgId) && auth.scope !== 'system') {
+      return c.json({ error: 'Organization not in scope' }, 403);
+    }
+
+    const [existing] = await db
+      .select()
+      .from(oauthClientBlocks)
+      .where(and(eq(oauthClientBlocks.orgId, orgId), eq(oauthClientBlocks.clientId, clientId)))
+      .limit(1);
+
+    if (!existing) {
+      return c.json({ error: 'No active block for this client' }, 404);
+    }
+
+    // Removing the row clears the block decisively. Already-revoked grants stay
+    // revoked — re-authorization is required for users to grant again.
+    await db.delete(oauthClientBlocks).where(eq(oauthClientBlocks.id, existing.id));
+
+    writeRouteAudit(c, {
+      orgId,
+      action: 'oauth.client.admin_unblock_org',
+      resourceType: 'oauth_client',
+      resourceId: clientId,
+      details: {
+        previousBlockedAt: existing.blockedAt.toISOString(),
+        previousBlockedReason: existing.blockedReason,
+      },
+    });
+
+    return c.body(null, 204);
   }
 );
 

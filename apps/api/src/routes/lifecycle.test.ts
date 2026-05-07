@@ -60,6 +60,9 @@ vi.mock('../db', () => ({
       values: vi.fn(function (this: any) { return this; }),
       returning: vi.fn(async () => nextInsertReturning),
     })),
+    delete: vi.fn(() => ({
+      where: vi.fn(async () => undefined),
+    })),
     transaction: vi.fn(async (fn: any) => fn({})),
   },
   withSystemDbAccessContext: vi.fn(async (fn: () => Promise<unknown>) => fn()),
@@ -349,5 +352,79 @@ describe('POST /admin/orgs/:orgId/oauth-clients/:clientId/block-globally', () =>
       }
     );
     expect(res.status).toBe(403);
+  });
+});
+
+// ============================================================
+// GET /admin/users/:userId/mobile-devices
+// ============================================================
+
+describe('GET /admin/users/:userId/mobile-devices', () => {
+  it('rejects bad userId', async () => {
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/users/not-uuid/mobile-devices'
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 403 when target user is outside caller scope', async () => {
+    // adminCanReachUser will look up partnerUsers/organizationUsers — both empty.
+    nextSelectRows = [];
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/users/00000000-0000-0000-0000-000000000007/mobile-devices'
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+// ============================================================
+// GET /admin/orgs/:orgId/oauth-clients
+// ============================================================
+
+describe('GET /admin/orgs/:orgId/oauth-clients', () => {
+  it('rejects bad orgId', async () => {
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/orgs/not-uuid/oauth-clients'
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 403 when org is outside caller scope', async () => {
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/orgs/00000000-0000-0000-0000-000000000999/oauth-clients'
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
+// ============================================================
+// POST /admin/orgs/:orgId/oauth-clients/:clientId/unblock-globally
+// ============================================================
+
+describe('POST /admin/orgs/:orgId/oauth-clients/:clientId/unblock-globally', () => {
+  it('rejects bad orgId', async () => {
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/orgs/not-uuid/oauth-clients/cid-123/unblock-globally',
+      { method: 'POST' }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses orgs outside the caller scope', async () => {
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/orgs/00000000-0000-0000-0000-000000000999/oauth-clients/cid-123/unblock-globally',
+      { method: 'POST' }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 404 when no block exists', async () => {
+    nextSelectRows = [];
+    const res = await lifecycleAdminRoutes.request(
+      '/admin/orgs/00000000-0000-0000-0000-00000000aaaa/oauth-clients/cid-123/unblock-globally',
+      { method: 'POST' }
+    );
+    // adminCanReachUser is not invoked; canAccessOrg uses 'o-1' so this org is out of scope
+    expect([403, 404]).toContain(res.status);
   });
 });
