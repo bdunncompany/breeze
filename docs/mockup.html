@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Mockup — Multi-tool icon button row (Breeze device detail)</title>
+<style>
+  :root {
+    --bg: #0b0c10;
+    --panel: #111319;
+    --panel-2: #161922;
+    --border: #232734;
+    --border-strong: #2f3445;
+    --fg: #e7eaf3;
+    --muted: #93a0b8;
+    --primary: #6068ff;
+    --primary-2: #4f59f0;
+    --green: #22c55e;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+    line-height: 1.45;
+    padding: 32px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 14px; margin: 32px 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+
+  /* Card matching device detail header */
+  .device-card {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .device-icon {
+    width: 56px; height: 56px;
+    border-radius: 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    display: grid; place-items: center;
+    color: var(--muted);
+  }
+  .device-meta { flex: 1; min-width: 0; }
+  .device-name {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 22px; font-weight: 600;
+  }
+  .badge-online {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(34, 197, 94, 0.12); color: var(--green);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+  }
+  .device-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 36px; padding: 0 14px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    color: var(--fg);
+    font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn:hover { background: #1c2030; }
+  .btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--primary-2); }
+
+  /* Icon button (square, 36x36) — used for the new provider row */
+  .icon-btn {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    display: grid; place-items: center;
+    cursor: pointer;
+    overflow: hidden;
+    position: relative;
+    transition: background 0.12s, border-color 0.12s, transform 0.08s;
+  }
+  .icon-btn img { width: 22px; height: 22px; object-fit: contain; border-radius: 3px; }
+  .icon-btn:hover { background: #1c2030; border-color: #3a4055; }
+  .icon-btn:active { transform: scale(0.96); }
+  .icon-btn.is-default {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px var(--primary) inset;
+  }
+  .icon-btn.is-default::after {
+    content: "";
+    position: absolute;
+    bottom: -3px; right: -3px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid var(--panel);
+  }
+  .icon-btn[disabled] {
+    opacity: 0.4; cursor: not-allowed;
+  }
+
+  /* Tooltip */
+  .icon-btn[data-tip] { position: relative; }
+  .icon-btn[data-tip]:hover::before {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%; transform: translateX(-50%);
+    background: #0a0b10; color: var(--fg);
+    border: 1px solid var(--border-strong);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    white-space: nowrap;
+    z-index: 10;
+  }
+
+  .group {
+    display: inline-flex; align-items: center;
+    gap: 4px;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .group .icon-btn { background: transparent; border-color: transparent; }
+  .group .icon-btn:hover { background: #1c2030; }
+  .group .icon-btn.is-default {
+    background: rgba(96, 104, 255, 0.1);
+    border-color: var(--primary);
+  }
+
+  /* Side-by-side comparison */
+  .compare {
+    display: grid; grid-template-columns: 1fr; gap: 24px;
+    margin-bottom: 8px;
+  }
+  .panel-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel-card h3 { margin: 0 0 4px; font-size: 14px; }
+  .panel-card .desc { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+
+  .legend {
+    color: var(--muted); font-size: 12px; line-height: 1.7;
+    margin-top: 12px;
+  }
+  .legend code {
+    background: var(--panel-2); padding: 1px 6px; border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .legend .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 8px; border-radius: 999px;
+    background: rgba(96, 104, 255, 0.15); color: var(--primary);
+    border: 1px solid var(--primary);
+    font-size: 10.5px;
+    margin-right: 4px;
+  }
+
+  /* Reboot icon (svg-ish) */
+  .ico { width: 14px; height: 14px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<h1>Multi-tool icon button row — mockup</h1>
+<p class="label">
+  Replaces the single <code style="background:var(--panel-2);padding:1px 6px;border-radius:4px;border:1px solid var(--border)">Connect Desktop</code> button with one icon-button per enabled provider.
+  "Run Script" → "Scripts" and "Remote Tools" → "Tools" to make horizontal room.
+</p>
+
+<div class="compare">
+  <!-- BEFORE -->
+  <div class="panel-card">
+    <h3>Before (current)</h3>
+    <div class="desc">Single launcher → opens whichever provider is the default (set in Partner&nbsp;Settings → Remote).</div>
+    <div class="device-card">
+      <div class="device-icon" aria-hidden="true">
+        <svg class="ico" style="width:24px;height:24px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <rect x="3" y="4" width="18" height="13" rx="1.5" /><path d="M3 17h18M9 20h6" />
+        </svg>
+      </div>
+      <div class="device-meta">
+        <div class="device-name">GTech-BD-Win11 <span class="badge-online">Online</span></div>
+        <div class="device-sub">Windows 11 Enterprise · Agent v0.65.7 · China</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary"><svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Run Script</button>
+        <button class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M3 17h18M9 20h6"/></svg>Connect Desktop</button>
+        <button class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4.5 4.5 0 1 0-1 7l3 3-3-3 5 5"/></svg>Remote Tools</button>
+        <button class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Reboot</button>
+        <button class="btn" style="padding:0 10px">⋯</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div class="panel-card">
+    <h3>After (proposed)</h3>
+    <div class="desc">
+      Icon row of every enabled provider. Click an icon to launch that tool against the device.
+      The current default provider (from Partner&nbsp;Settings → Remote) carries an indicator dot
+      and a primary outline so it stays visually distinguishable. Hover for the provider name.
+    </div>
+    <div class="device-card">
+      <div class="device-icon" aria-hidden="true">
+        <svg class="ico" style="width:24px;height:24px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <rect x="3" y="4" width="18" height="13" rx="1.5" /><path d="M3 17h18M9 20h6" />
+        </svg>
+      </div>
+      <div class="device-meta">
+        <div class="device-name">GTech-BD-Win11 <span class="badge-online">Online</span></div>
+        <div class="device-sub">Windows 11 Enterprise · Agent v0.65.7 · China</div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary"><svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Scripts</button>
+
+        <div class="group" role="group" aria-label="Remote desktop launchers">
+          <button class="icon-btn is-default" data-tip="Built-in (Breeze WebRTC) — default">
+            <img src="icons/breezelogo.png" alt="Breeze">
+          </button>
+          <button class="icon-btn" data-tip="RustDesk">
+            <img src="icons/rustlogo.jpg" alt="RustDesk">
+          </button>
+          <button class="icon-btn" data-tip="ScreenConnect">
+            <img src="icons/screenconnectlogo.jpg" alt="ScreenConnect">
+          </button>
+          <button class="icon-btn" data-tip="TeamViewer">
+            <img src="icons/teamviewerlogo.jpg" alt="TeamViewer">
+          </button>
+          <button class="icon-btn" data-tip="AnyDesk">
+            <img src="icons/anydesklogo.jpg" alt="AnyDesk">
+          </button>
+          <button class="icon-btn" data-tip="Splashtop">
+            <img src="icons/splashtoplogo.jpg" alt="Splashtop">
+          </button>
+        </div>
+
+        <button class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4.5 4.5 0 1 0-1 7l3 3-3-3 5 5"/></svg>Tools</button>
+        <button class="btn"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Reboot</button>
+        <button class="btn" style="padding:0 10px">⋯</button>
+      </div>
+    </div>
+
+    <div class="legend">
+      <p>
+        <span class="pill">●</span>
+        The blue dot + outline indicates the current default provider (the one a partner-admin selected in
+        <code>Partner Settings → Remote</code>). Clicking the default icon does the same thing the existing
+        <code>Connect Desktop</code> button does today.
+      </p>
+      <p>
+        Disabled providers (per the partner setting <code>enabled: false</code>) don't appear in the row at
+        all. A device that's missing the required custom field for a given provider gets a dimmed icon with
+        a tooltip explaining why (e.g. <em>"sc_session_id not set on this device"</em>).
+      </p>
+      <p>
+        On screens narrower than the actions row can fit, the providers collapse into a single icon-button
+        with a popover (icon = current default; arrow on the right opens the picker).
+      </p>
+    </div>
+  </div>
+</div>
+
+<h2>Notes for the v2 implementation</h2>
+<ul style="color: var(--muted); font-size: 13px; line-height: 1.7;">
+  <li>This view does not change the data model — it consumes the same <code>partners.settings.remoteAccessProviders</code> array we just shipped, just renders one icon per <code>enabled: true</code> provider.</li>
+  <li>The "Connect Desktop" rendering is a fallback when the partner has no providers configured (or only the built-in is enabled): show a single icon for the built-in WebRTC option, identical to today's behavior.</li>
+  <li>Provider icons are loaded from a partner-uploadable asset slot (or from a built-in catalog with the names <code>rustdesk</code>, <code>screenconnect</code>, <code>teamviewer</code>, <code>anydesk</code>, <code>splashtop</code>). MSPs with a custom-branded build (e.g. our <code>BDunn-RustRemote</code>) can upload their own image.</li>
+  <li>The default-provider indicator stays in sync with whatever <code>defaultProviderId</code> is currently set; toggling default in the settings page reflows the row instantly.</li>
+  <li>Renames are pure label changes — <code>Run Script</code> → <code>Scripts</code> and <code>Remote Tools</code> → <code>Tools</code>. Both icons unchanged.</li>
+</ul>
+
+</body>
+</html>
