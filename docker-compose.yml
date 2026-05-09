@@ -116,6 +116,13 @@ services:
       BREEZE_VERSION: ${BREEZE_VERSION:?Set BREEZE_VERSION in .env}
       BINARY_SOURCE: ${BINARY_SOURCE:-github}
       RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: ${RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS:-}
+      # Hosted SaaS gate. Compose defaults to false so self-hosters upgrade
+      # without touching their .env. Hosted operators must set IS_HOSTED=true
+      # in .env so this interpolates to true. The API config validator (#570)
+      # refuses to start in production if the container env value is missing
+      # or non-boolean, so a hand-edited compose that drops this line still
+      # fails loud rather than silently bypassing the email-verification gate.
+      IS_HOSTED: ${IS_HOSTED:-false}
       AGENT_BINARY_DIR: /data/binaries/agent
       VIEWER_BINARY_DIR: /data/binaries/viewer
       HELPER_BINARY_DIR: /data/binaries/helper

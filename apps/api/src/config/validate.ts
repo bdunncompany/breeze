@@ -340,6 +340,7 @@ const envSchema = z
     BINARY_SOURCE: z.string().optional(),
     RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: z.string().optional(),
     BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: z.string().optional(),
+    IS_HOSTED: z.string().optional(),
 
     // -- Optional with defaults -----------------------------------------------
     API_PORT: portSchema,
@@ -532,8 +533,8 @@ PARTNER_HOOKS_SECRET: z.string().min(16).optional(),
       }
 
       const trustProxyHeaders = (data.TRUST_PROXY_HEADERS ?? '').trim().toLowerCase();
-      const validTrustProxyValues = new Set(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']);
-      if (!validTrustProxyValues.has(trustProxyHeaders)) {
+      const validBoolValues = new Set(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']);
+      if (!validBoolValues.has(trustProxyHeaders)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['TRUST_PROXY_HEADERS'],
@@ -542,6 +543,20 @@ PARTNER_HOOKS_SECRET: z.string().min(16).optional(),
         });
       } else if (['true', '1', 'yes', 'on'].includes(trustProxyHeaders)) {
         validateTrustedProxyCidrsForProduction(data.TRUSTED_PROXY_CIDRS, ctx);
+      }
+
+      // IS_HOSTED gates the email-verification → status='active' path in
+      // register.ts. Unset/unmapped on a hosted droplet would silently
+      // drop new partners straight to 'active', bypassing the verify gate
+      // (issue #570). Self-hosted deploys must opt out explicitly.
+      const isHostedRaw = (data.IS_HOSTED ?? '').trim().toLowerCase();
+      if (!validBoolValues.has(isHostedRaw)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['IS_HOSTED'],
+          message:
+            'IS_HOSTED must be explicitly set in production to true/false (or 1/0, yes/no, on/off). Hosted SaaS deployments set true; self-hosted deployments set false.',
+        });
       }
     }
   });
@@ -661,6 +676,7 @@ export function validateConfig(): AppConfig {
     BINARY_SOURCE: env.BINARY_SOURCE,
     RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: env.RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS,
     BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: env.BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS,
+    IS_HOSTED: env.IS_HOSTED,
     API_PORT: env.API_PORT,
     REDIS_URL: env.REDIS_URL,
     REDIS_HOST: env.REDIS_HOST,
