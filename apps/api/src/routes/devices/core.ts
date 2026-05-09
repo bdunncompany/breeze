@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { and, eq, gte, like, sql, desc, inArray } from 'drizzle-orm';
-import { db } from '../../db';
+import { db, withSystemDbAccessContext } from '../../db';
 import { createHash, randomBytes } from 'crypto';
 import {
   devices,
@@ -13,6 +13,7 @@ import {
   sites,
   enrollmentKeys,
   organizations,
+  partners,
 } from '../../db/schema';
 import { authMiddleware, requireMfa, requireScope, requirePermission } from '../../middleware/auth';
 import { PERMISSIONS } from '../../services/permissions';
@@ -20,6 +21,8 @@ import { getPagination, getDeviceWithOrgCheck } from './helpers';
 import { listDevicesSchema, updateDeviceSchema } from './schemas';
 import { writeRouteAudit } from '../../services/auditEvents';
 import { resolveRemoteAccessForDevice } from '../../services/remoteAccessPolicy';
+import { buildRemoteAccessLaunchUrl } from '../../services/remoteAccessLauncher';
+import type { InheritableRemoteAccessSettings, PartnerSettings } from '@breeze/shared';
 import { hashEnrollmentKey } from '../../services/enrollmentKeySecurity';
 import { sendCommandToAgent, isAgentConnected } from '../agentWs';
 import { CommandTypes } from '../../services/commandQueue';
@@ -470,6 +473,38 @@ coreRoutes.get(
       console.error(`[DeviceDetail] Failed to resolve remote access policy for ${deviceId}:`, err);
     }
 
+    // Build the deep-link URL the Connect Desktop button should fire when the
+    // partner has a third-party remote-tool provider configured (RustDesk,
+    // ScreenConnect, TeamViewer, etc.). Building this server-side keeps the
+    // provider's preset password out of the web bundle. Non-critical — silently
+    // null on error so the button falls back to the built-in WebRTC flow.
+    //
+    // The partners table has partner-axis RLS, and the request scope is the
+    // user's (organization or partner) — not the partner whose settings we
+    // need. Wrap the lookup in a system-scope DB context so the policy
+    // engine doesn't filter the row out. This mirrors how
+    // remoteAccessPolicy.ts uses systemAuth for the same reason.
+    let remoteAccessLaunchUrl: string | null = null;
+    try {
+      const partnerSettings = await withSystemDbAccessContext(async () => {
+        const [partnerRow] = await db
+          .select({ settings: partners.settings })
+          .from(partners)
+          .innerJoin(organizations, eq(organizations.partnerId, partners.id))
+          .where(eq(organizations.id, device.orgId))
+          .limit(1);
+        return (partnerRow?.settings ?? {}) as PartnerSettings;
+      });
+      const providers: InheritableRemoteAccessSettings | undefined =
+        partnerSettings.remoteAccessProviders;
+      remoteAccessLaunchUrl = buildRemoteAccessLaunchUrl(
+        { customFields: device.customFields as Record<string, unknown> | null },
+        providers,
+      );
+    } catch (err) {
+      console.error(`[DeviceDetail] Failed to resolve remote-access launch URL for ${deviceId}:`, err);
+    }
+
     return c.json({
       ...device,
       hardware: hardware || null,
@@ -480,6 +515,7 @@ coreRoutes.get(
       siteTimezone: site?.timezone || 'UTC',
       orgName: org?.name ?? null,
       remoteAccessPolicy,
+      remoteAccessLaunchUrl,
     });
   }
 );
