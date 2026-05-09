@@ -302,6 +302,33 @@ const partnerSettingsSchema = z.object({
     messagesPerHourPerOrg: z.number().int().min(1).max(10000).optional(),
     approvalMode: z.enum(['per_step', 'action_plan', 'auto_approve', 'hybrid_plan']).optional(),
   }).optional(),
+  remoteAccessProviders: z.object({
+    defaultProviderId: z.string().optional(),
+    providers: z.array(z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      // urlTemplate may be either a custom-scheme template
+      // (e.g. 'rustdesk://{id}?password={password}') or an https launcher
+      // (e.g. 'https://acme.screenconnect.com/Host#Access///{id}/Join').
+      // The browser auto-detects launch mode by prefix.
+      // {id} must appear or the launcher would always resolve to the same
+      // URL and ignore the per-device identifier.
+      urlTemplate: z.string()
+        .min(1)
+        .max(2000)
+        .refine(
+          (t) => t.includes('{id}'),
+          'Template must include the {id} placeholder for the per-device value',
+        )
+        .refine(
+          (t) => /^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(t),
+          'Template must start with a URL scheme followed by a colon (e.g. rustdesk:, https:)',
+        ),
+      customFieldKey: z.string().min(1),
+      password: z.string().optional(),
+      enabled: z.boolean(),
+    })).optional(),
+  }).optional(),
 });
 
 const updatePartnerSettingsSchema = z.object({
