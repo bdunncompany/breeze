@@ -1376,7 +1376,7 @@ describe('org routes', () => {
       });
 
       expect(res.status).toBe(200);
-      const writtenArg = setSpy.mock.calls[0][0];
+      const writtenArg = setSpy.mock.calls[0]![0];
       expect(writtenArg.settings.timezone).toBe('America/Chicago');
       expect(writtenArg.settings.branding).toEqual({ theme: 'dark' });
       expect(writtenArg.settings.organizationOrder).toEqual([id2, id1]);
