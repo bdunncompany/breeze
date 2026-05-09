@@ -111,14 +111,38 @@ export default function ConnectDesktopButton({ deviceId, className = '', compact
       // WebRTC is now available. Re-fetch the device record right before
       // deciding so the click always uses fresh state.
       let liveDesktopAccess: DesktopAccessState | null = desktopAccess ?? null;
+      let remoteAccessLaunchUrl: string | null = null;
       try {
         const devRes = await fetchWithAuth(`/devices/${deviceId}`);
         if (devRes.ok) {
-          const devBody = await devRes.json() as { desktopAccess?: DesktopAccessState | null };
+          const devBody = await devRes.json() as {
+            desktopAccess?: DesktopAccessState | null;
+            remoteAccessLaunchUrl?: string | null;
+          };
           liveDesktopAccess = devBody.desktopAccess ?? null;
+          remoteAccessLaunchUrl = devBody.remoteAccessLaunchUrl ?? null;
         }
       } catch {
         // Network blip — fall back to the prop so the connect flow still runs.
+      }
+
+      // If the partner has configured a third-party remote-tool provider
+      // (RustDesk, ScreenConnect, TeamViewer, etc.) and this device has the
+      // matching per-device identifier in its custom_fields, the API has
+      // already built the launch URL with any preset password substituted
+      // and percent-encoded. Auto-detect launch mode by URL prefix:
+      //   - http(s):// → open in a new browser tab (ScreenConnect, web-launchers)
+      //   - any other scheme → hand off to the OS protocol handler (RustDesk, etc.)
+      // Either way, skip the built-in WebRTC desktop flow.
+      if (remoteAccessLaunchUrl) {
+        setStatus('launching');
+        if (/^https?:\/\//i.test(remoteAccessLaunchUrl)) {
+          window.open(remoteAccessLaunchUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          tryDeepLink(remoteAccessLaunchUrl);
+        }
+        setTimeout(() => setStatus('idle'), 1500);
+        return;
       }
 
       // Auto-detect: fall back to VNC when the WebRTC path can't work but VNC relay is enabled.
