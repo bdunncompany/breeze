@@ -1297,4 +1297,125 @@ describe('org routes', () => {
     });
 
   });
+
+  describe('PATCH /orgs/organizations/reorder', () => {
+    const id1 = '00000000-0000-0000-0000-000000000001';
+    const id2 = '00000000-0000-0000-0000-000000000002';
+    const id3 = '00000000-0000-0000-0000-000000000003';
+
+    function mockReadModifyWrite(currentSettings: Record<string, unknown>) {
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ settings: currentSettings }])
+          })
+        })
+      } as any);
+      vi.mocked(db.update).mockReturnValueOnce({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 'partner-123', name: 'Acme' }])
+          })
+        })
+      } as any);
+    }
+
+    it('persists a sanitized order and returns 200', async () => {
+      setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2, id3] });
+      mockReadModifyWrite({});
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [id3, id1, id2] })
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.organizationOrder).toEqual([id3, id1, id2]);
+    });
+
+    it('drops IDs that are not in the caller accessible orgs', async () => {
+      const stranger = '99999999-9999-9999-9999-999999999999';
+      setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2] });
+      mockReadModifyWrite({});
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [stranger, id2, id1] })
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.organizationOrder).toEqual([id2, id1]);
+    });
+
+    it('preserves other partner settings when merging', async () => {
+      setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2] });
+      const setSpy = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{ id: 'partner-123', name: 'Acme' }])
+        })
+      });
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{
+              settings: { timezone: 'America/Chicago', branding: { theme: 'dark' } }
+            }])
+          })
+        })
+      } as any);
+      vi.mocked(db.update).mockReturnValueOnce({ set: setSpy } as any);
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [id2, id1] })
+      });
+
+      expect(res.status).toBe(200);
+      const writtenArg = setSpy.mock.calls[0][0];
+      expect(writtenArg.settings.timezone).toBe('America/Chicago');
+      expect(writtenArg.settings.branding).toEqual({ theme: 'dark' });
+      expect(writtenArg.settings.organizationOrder).toEqual([id2, id1]);
+    });
+
+    it('rejects a system-scoped caller', async () => {
+      setAuthContext({ scope: 'system' });
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [id1] })
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects an organization-scoped caller', async () => {
+      setAuthContext({ scope: 'organization' });
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [id1] })
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects a non-uuid in the orderedIds array', async () => {
+      setAuthContext({ scope: 'partner', accessibleOrgIds: [id1] });
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: ['not-a-uuid'] })
+      });
+
+      expect(res.status).toBe(400);
+    });
+  });
 });
