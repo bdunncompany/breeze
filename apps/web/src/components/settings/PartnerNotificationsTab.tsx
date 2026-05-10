@@ -130,11 +130,11 @@ export default function PartnerNotificationsTab({ data, onChange }: Props) {
         <div>
           <p className="text-sm font-medium">Pushover Defaults</p>
           <p className="text-xs text-muted-foreground">
-            App token inherited by any per-org Pushover channel that leaves its token blank.
+            Inherited by any per-org Pushover channel that leaves the matching field blank.
           </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="space-y-2 sm:col-span-3">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
             <label className="text-sm font-medium">Application Token</label>
             <input
               type="password"
@@ -146,6 +146,20 @@ export default function PartnerNotificationsTab({ data, onChange }: Props) {
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
             />
           </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Default User or Group Key</label>
+            <input
+              type="text"
+              autoComplete="off"
+              value={data.pushoverDefaultUser ?? ''}
+              maxLength={30}
+              onChange={e => set({ pushoverDefaultUser: e.target.value || undefined })}
+              placeholder={PLACEHOLDER}
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+            />
+          </div>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <label className="text-sm font-medium">Default Sound</label>
             <input

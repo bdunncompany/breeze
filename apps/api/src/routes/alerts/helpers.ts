@@ -204,13 +204,18 @@ export function validateNotificationChannelConfig(
   }
 
   if (type === 'pushover') {
-    // Per-org channel may leave token blank to inherit from partner.
-    // Only enforce that the rest of the shape is OK.
+    // Per-org channel may leave token AND/OR user blank to inherit from
+    // partner.settings.notifications.{pushoverAppToken,pushoverDefaultUser}.
+    // Substitute placeholders so the rest of the shape (priority, device,
+    // etc.) still gets checked.
     const cfg = config as { token?: unknown; user?: unknown };
     const tokenForCheck = typeof cfg.token === 'string' && cfg.token.trim().length > 0
       ? cfg.token
       : 'x'.repeat(30);
-    return validatePushoverConfig({ ...config, token: tokenForCheck }).errors;
+    const userForCheck = typeof cfg.user === 'string' && cfg.user.trim().length > 0
+      ? cfg.user
+      : 'x'.repeat(30);
+    return validatePushoverConfig({ ...config, token: tokenForCheck, user: userForCheck }).errors;
   }
 
   return [];

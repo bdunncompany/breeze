@@ -680,10 +680,11 @@ async function sendPagerDutyChannelNotification(
 /**
  * Send notification via Pushover channel.
  *
- * Per-org channels may leave the application token blank; in that case we
- * fall back to the partner-level `pushoverAppToken` (and optional default
- * sound / priority) from `partners.settings.notifications`. This mirrors the
- * Slack-webhook-URL inheritance pattern.
+ * Per-org channels may leave any field blank; in that case we fall back to
+ * the partner-level `pushoverAppToken` / `pushoverDefaultUser` /
+ * `pushoverDefaultSound` / `pushoverDefaultPriority` from
+ * `partners.settings.notifications`. This mirrors the Slack-webhook-URL
+ * inheritance pattern.
  */
 async function sendPushoverChannelNotification(
   config: PushoverConfig,
@@ -694,7 +695,10 @@ async function sendPushoverChannelNotification(
   const merged: PushoverConfig = { ...config };
 
   const tokenBlank = !merged.token || merged.token.trim().length === 0;
-  if (tokenBlank && org?.partnerId) {
+  const userBlank = !merged.user || merged.user.trim().length === 0;
+  const needsInherit = tokenBlank || userBlank || merged.sound === undefined || merged.priority === undefined;
+
+  if (needsInherit && org?.partnerId) {
     const inherited = await runWithSystemDbAccess(async () => {
       const [partner] = await db
         .select({ settings: partners.settings })
@@ -704,13 +708,17 @@ async function sendPushoverChannelNotification(
       const notifications = (partner?.settings as { notifications?: Record<string, unknown> } | null)?.notifications;
       return {
         pushoverAppToken: typeof notifications?.pushoverAppToken === 'string' ? notifications.pushoverAppToken : undefined,
+        pushoverDefaultUser: typeof notifications?.pushoverDefaultUser === 'string' ? notifications.pushoverDefaultUser : undefined,
         pushoverDefaultSound: typeof notifications?.pushoverDefaultSound === 'string' ? notifications.pushoverDefaultSound : undefined,
         pushoverDefaultPriority: typeof notifications?.pushoverDefaultPriority === 'number' ? notifications.pushoverDefaultPriority as PushoverPriority : undefined,
       };
     });
 
-    if (inherited.pushoverAppToken) {
+    if (tokenBlank && inherited.pushoverAppToken) {
       merged.token = inherited.pushoverAppToken;
+    }
+    if (userBlank && inherited.pushoverDefaultUser) {
+      merged.user = inherited.pushoverDefaultUser;
     }
     if (merged.sound === undefined && inherited.pushoverDefaultSound) {
       merged.sound = inherited.pushoverDefaultSound;
