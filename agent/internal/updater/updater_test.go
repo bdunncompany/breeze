@@ -793,3 +793,110 @@ func TestReplaceBinary_UnlinksBeforeWrite(t *testing.T) {
 		t.Fatalf("held FD should still read old content, got: %s", string(oldContent[:n]))
 	}
 }
+
+// TestTrustedManifestKeys_IncludesPinnedKeys verifies that per-deployment
+// pinned pubkeys delivered via heartbeat/enrollment (#625) are included in
+// the trust set alongside the embedded LanternOps key.
+func TestTrustedManifestKeys_IncludesPinnedKeys(t *testing.T) {
+	pinnedRaw := make([]byte, ed25519.PublicKeySize)
+	for i := range pinnedRaw {
+		pinnedRaw[i] = byte(i + 1)
+	}
+	pinned := base64.StdEncoding.EncodeToString(pinnedRaw)
+
+	u := &Updater{
+		config: &Config{
+			PinnedManifestPubKeys: []string{"deploy-test:" + pinned},
+		},
+	}
+	keys := u.trustedManifestKeys()
+
+	// Embedded LanternOps key + the pinned key.
+	if len(keys) < 2 {
+		t.Fatalf("expected >= 2 trusted keys (embedded + pinned), got %d", len(keys))
+	}
+
+	// Verify the pinned bytes appear in the result.
+	found := false
+	for _, k := range keys {
+		if string(k) == string(pinnedRaw) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("pinned pubkey was not present in trustedManifestKeys output")
+	}
+}
+
+// TestVerifyUpdateManifest_AcceptsManifestSignedByPinnedKey exercises the full
+// per-deployment trust path end-to-end: generate a fresh Ed25519 keypair, sign
+// a manifest JSON, pin the pubkey via Config.PinnedManifestPubKeys, and assert
+// that verifyUpdateManifest accepts the manifest. This is the gap left by
+// TestTrustedManifestKeys_IncludesPinnedKeys, which only checked that the key
+// appears in the slice — not that the signature path actually works (#625).
+func TestVerifyUpdateManifest_AcceptsManifestSignedByPinnedKey(t *testing.T) {
+	// nil uses crypto/rand internally — same as the existing test helpers.
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+
+	manifest := updateManifest{
+		Version:   "0.65.9",
+		Component: "agent",
+		Platform:  manifestPlatform(),
+		Arch:      runtime.GOARCH,
+		URL:       "https://selftest.local/agent",
+		Checksum:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:      4096,
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := ed25519.Sign(priv, manifestJSON)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	u := &Updater{
+		config: &Config{
+			Component:             "agent",
+			PinnedManifestPubKeys: []string{"deploy-test:" + pubB64},
+		},
+	}
+	info := downloadInfo{
+		URL:               manifest.URL,
+		Checksum:          manifest.Checksum,
+		Manifest:          string(manifestJSON),
+		ManifestSignature: sigB64,
+	}
+	got, err := u.verifyUpdateManifest(info, "0.65.9")
+	if err != nil {
+		t.Fatalf("verifyUpdateManifest: %v", err)
+	}
+	if got.Version != "0.65.9" {
+		t.Fatalf("expected version 0.65.9, got %q", got.Version)
+	}
+}
+
+// TestTrustedManifestKeys_SkipsMalformedPinnedEntries ensures that bad entries
+// in the pinned list (no colon, blank pubkey, wrong base64) don't crash or
+// poison the trust set — they're just dropped.
+func TestTrustedManifestKeys_SkipsMalformedPinnedEntries(t *testing.T) {
+	u := &Updater{
+		config: &Config{
+			PinnedManifestPubKeys: []string{
+				"missing-colon",
+				"key-id:",
+				"key-id:not-valid-base64-!!!",
+				":",
+			},
+		},
+	}
+	keys := u.trustedManifestKeys()
+	// Just the embedded LanternOps key — all malformed entries dropped.
+	if len(keys) < 1 {
+		t.Fatalf("expected at least 1 (embedded) key, got %d", len(keys))
+	}
+}

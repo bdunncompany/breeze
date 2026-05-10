@@ -22,6 +22,8 @@ import { generateAgentId, generateApiKey, issueMtlsCertForDevice } from './helpe
 import { queueWarrantySyncForDevice } from '../../services/warrantyWorker';
 import { dispatchHook } from '../../services/partnerHooks';
 import { matchDeploymentInviteOnEnrollment } from '../../modules/mcpInvites/matchInviteOnEnrollment';
+import { getActiveTrustKeyset, type ManifestTrustKey } from '../../services/manifestSigning';
+import { captureException } from '../../services/sentry';
 
 export const enrollmentRoutes = new Hono();
 const ENROLLMENT_RATE_LIMIT = 10;
@@ -593,6 +595,18 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
       deviceId: device.id,
     });
 
+    // Per-deployment manifest trust keys for self-host agent updates.
+    // Empty for hosted SaaS where the LanternOps build-time trust root in
+    // the agent binary is the only required key. See #625 / docs/deploy/
+    // agent-update-trust-bootstrap.md.
+    let manifestTrustKeys: ManifestTrustKey[] = [];
+    try {
+      manifestTrustKeys = await getActiveTrustKeyset();
+    } catch (err) {
+      console.error(`[enrollment] Failed to load manifest trust keyset for enrollmentKeyId=${key.id}, deviceId=${device.id}:`, err);
+      captureException(err);
+    }
+
     return c.json({
       agentId: agentId,
       deviceId: device.id,
@@ -605,7 +619,8 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
         heartbeatIntervalSeconds: 60,
         metricsCollectionIntervalSeconds: 30
       },
-      mtls: mtlsCert
+      mtls: mtlsCert,
+      manifestTrustKeys,
     }, 201);
   });
 });

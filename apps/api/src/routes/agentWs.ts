@@ -1834,7 +1834,7 @@ export function createAgentWsHandlers(agentId: string, preValidatedAgent: AgentD
               ws.send(JSON.stringify({
                 type: 'heartbeat_ack',
                 timestamp: Date.now(),
-                commands: pendingCommands
+                commands: pendingCommands,
               }));
               break;
             }

@@ -89,15 +89,16 @@ type DesktopAccessState struct {
 }
 
 type HeartbeatResponse struct {
-	Commands               []Command       `json:"commands"`
-	ConfigUpdate           map[string]any  `json:"configUpdate,omitempty"`
-	UpgradeTo              string          `json:"upgradeTo,omitempty"`
-	RenewCert              bool            `json:"renewCert,omitempty"`
-	RotateToken            bool            `json:"rotateToken,omitempty"`
-	HelperEnabled          bool            `json:"helperEnabled,omitempty"`
-	HelperSettings         *HelperSettings `json:"helperSettings,omitempty"`
-	HelperUpgradeTo        string          `json:"helperUpgradeTo,omitempty"`
-	ManageRemoteManagement bool            `json:"manageRemoteManagement,omitempty"`
+	Commands               []Command              `json:"commands"`
+	ConfigUpdate           map[string]any         `json:"configUpdate,omitempty"`
+	UpgradeTo              string                 `json:"upgradeTo,omitempty"`
+	RenewCert              bool                   `json:"renewCert,omitempty"`
+	RotateToken            bool                   `json:"rotateToken,omitempty"`
+	HelperEnabled          bool                   `json:"helperEnabled,omitempty"`
+	HelperSettings         *HelperSettings        `json:"helperSettings,omitempty"`
+	HelperUpgradeTo        string                 `json:"helperUpgradeTo,omitempty"`
+	ManageRemoteManagement bool                   `json:"manageRemoteManagement,omitempty"`
+	ManifestTrustKeys      []api.ManifestTrustKey `json:"manifestTrustKeys,omitempty"`
 }
 
 type HelperSettings struct {
@@ -183,6 +184,15 @@ type Heartbeat struct {
 	certRenewing      atomic.Bool
 	tokenRotating     atomic.Bool
 	upgradeInProgress atomic.Bool
+
+	// Set when PinManifestKeys returns ErrManifestTrustRotationRejected.
+	// Suspends auto-update until the rotation conflict is resolved (server
+	// stops sending the conflicting key, restoring an idempotent re-pin) or
+	// the agent restarts. Without this gate, a single SECURITY log line is
+	// the only signal of a possible API compromise — auto-update would
+	// otherwise continue against the still-pinned (legitimate) key, masking
+	// the rejection from the operator.
+	manifestTrustRotationRejected atomic.Bool
 
 	// Helper chat enabled flag from org settings
 	helperEnabled atomic.Bool
@@ -2130,6 +2140,45 @@ func (h *Heartbeat) sendHeartbeat() {
 		h.applyConfigUpdate(response.ConfigUpdate)
 	}
 
+	// Pin per-deployment manifest trust keys delivered by the server (#625).
+	// TOFU: PinManifestKeys rejects a *changed* pubkey for an already-pinned
+	// keyId. This blocks an attacker with API write access (but not the signing
+	// key) from rotating in their own key. It does NOT defend against a
+	// host-level compromise of the API — the signing key and APP_ENCRYPTION_KEY
+	// live there. See docs/deploy/agent-update-trust-bootstrap.md for the
+	// threat model.
+	if len(response.ManifestTrustKeys) > 0 {
+		keys := make([]config.ManifestTrustKey, 0, len(response.ManifestTrustKeys))
+		for _, k := range response.ManifestTrustKeys {
+			if k.KeyID == "" || k.PublicKeyB64 == "" {
+				continue
+			}
+			keys = append(keys, config.ManifestTrustKey{KeyID: k.KeyID, PublicKeyB64: k.PublicKeyB64})
+		}
+		if len(keys) > 0 {
+			cfgPath := config.ActiveConfigFile()
+			if err := config.PinManifestKeys(cfgPath, keys); err != nil {
+				if errors.Is(err, config.ErrManifestTrustRotationRejected) {
+					h.manifestTrustRotationRejected.Store(true)
+					log.Error("SECURITY: manifest trust key rotation rejected — auto-update suspended until rotation resolved or agent restart",
+						"error", err.Error())
+				} else {
+					log.Warn("manifest trust key pin failed (non-rotation)", "error", err.Error())
+				}
+			} else {
+				// Successful pin (idempotent or genuine new keyId append) means
+				// the conflict — if any — is no longer present. Clear the
+				// rotation-rejected gate so auto-update can resume.
+				h.manifestTrustRotationRejected.Store(false)
+				if reloaded, rerr := config.Reload(); rerr != nil {
+					log.Warn("failed to reload config after pinning manifest trust keys; in-memory pinned set stale until next restart", "error", rerr.Error())
+				} else if reloaded != nil {
+					h.config.PinnedManifestPubKeys = reloaded.PinnedManifestPubKeys
+				}
+			}
+		}
+	}
+
 	// Process any commands via worker pool
 	for _, cmd := range response.Commands {
 		if !h.accepting.Load() {
@@ -2144,7 +2193,10 @@ func (h *Heartbeat) sendHeartbeat() {
 
 	// Handle upgrade if requested and auto-update is enabled
 	if response.UpgradeTo != "" && response.UpgradeTo != h.agentVersion {
-		if h.config.AutoUpdate {
+		if h.manifestTrustRotationRejected.Load() {
+			log.Error("SECURITY: skipping auto-update — manifest trust rotation rejection unresolved",
+				"targetVersion", response.UpgradeTo)
+		} else if h.config.AutoUpdate {
 			if h.upgradeInProgress.CompareAndSwap(false, true) {
 				go h.handleUpgrade(response.UpgradeTo)
 			} else {
@@ -2958,11 +3010,12 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 	backupPath := filepath.Join(backupDir, "breeze-agent.backup")
 
 	updaterCfg := &updater.Config{
-		ServerURL:      h.config.ServerURL,
-		AuthToken:      h.secureToken,
-		CurrentVersion: h.agentVersion,
-		BinaryPath:     binaryPath,
-		BackupPath:     backupPath,
+		ServerURL:             h.config.ServerURL,
+		AuthToken:             h.secureToken,
+		CurrentVersion:        h.agentVersion,
+		BinaryPath:            binaryPath,
+		BackupPath:            backupPath,
+		PinnedManifestPubKeys: h.config.PinnedManifestPubKeys,
 	}
 
 	u := updater.New(updaterCfg)

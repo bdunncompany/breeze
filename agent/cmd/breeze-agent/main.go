@@ -890,6 +890,36 @@ func enrollDevice(enrollmentKey string) {
 		}
 	}
 
+	// Pin per-deployment manifest trust keys delivered at enrollment (#625).
+	// Self-host (BINARY_SOURCE=local) deployments sign update manifests with
+	// a per-deployment Ed25519 key whose public half is delivered here.
+	//
+	// Enrollment is fresh-trust: no existing pin to defend against rotation, so
+	// we set the pinned set directly. Subsequent updates flow through
+	// config.PinManifestKeys (TOFU). See #625.
+	if len(enrollResp.ManifestTrustKeys) > 0 {
+		pinned := make([]string, 0, len(enrollResp.ManifestTrustKeys))
+		for _, k := range enrollResp.ManifestTrustKeys {
+			if k.KeyID == "" || k.PublicKeyB64 == "" {
+				continue
+			}
+			pinned = append(pinned, k.KeyID+":"+k.PublicKeyB64)
+		}
+		if len(pinned) == 0 {
+			// All entries malformed — preserve any pre-existing pinned set rather
+			// than silently destroying trust state.
+			enrollLog.Warn("enrollment response delivered manifest trust keys but all entries were malformed; not overwriting existing pinned set",
+				"received", len(enrollResp.ManifestTrustKeys))
+		} else {
+			if dropped := len(enrollResp.ManifestTrustKeys) - len(pinned); dropped > 0 {
+				enrollLog.Warn("dropped malformed manifest trust keys from enrollment",
+					"received", len(enrollResp.ManifestTrustKeys), "kept", len(pinned), "dropped", dropped)
+			}
+			cfg.PinnedManifestPubKeys = pinned
+			enrollLog.Info("pinned manifest trust keys from enrollment", "count", len(pinned))
+		}
+	}
+
 	if err := config.SaveTo(cfg, cfgFile); err != nil {
 		enrollError(catConfig,
 			fmt.Sprintf(
