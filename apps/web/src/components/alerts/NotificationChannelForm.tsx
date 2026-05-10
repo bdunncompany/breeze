@@ -82,14 +82,7 @@ const notificationChannelSchema = z.object({
   templateResolved: z.string().optional(),
 }).superRefine((data, ctx) => {
   if (data.type === 'pushover') {
-    const user = data.pushoverUser?.trim() || '';
-    if (user.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['pushoverUser'],
-        message: 'Pushover user or group key is required'
-      });
-    } else if (user.length > 30) {
+    if (data.pushoverUser && data.pushoverUser.length > 30) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['pushoverUser'],
@@ -508,7 +501,7 @@ export default function NotificationChannelForm({
                 <input
                   id="pushover-user"
                   type="text"
-                  placeholder="30-character user/group key"
+                  placeholder="Leave blank to inherit from partner"
                   maxLength={30}
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   {...register('pushoverUser')}
@@ -517,7 +510,7 @@ export default function NotificationChannelForm({
                   <p className="text-xs text-destructive">{errors.pushoverUser.message}</p>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    User key from your Pushover dashboard, or a group key for fan-out.
+                    30-char user/group key. Blank uses partner default.
                   </p>
                 )}
               </div>

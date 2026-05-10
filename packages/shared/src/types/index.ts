@@ -499,6 +499,7 @@ export interface InheritableNotificationSettings {
   webhooks?: string[];
   preferences?: Record<string, Record<string, boolean>>;
   pushoverAppToken?: string;
+  pushoverDefaultUser?: string;
   pushoverDefaultSound?: string;
   pushoverDefaultPriority?: -2 | -1 | 0 | 1 | 2;
 }

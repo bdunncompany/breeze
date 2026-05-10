@@ -262,6 +262,7 @@ const partnerSettingsSchema = z.object({
     webhooks: z.array(z.string()).optional(),
     preferences: z.record(z.string(), z.record(z.string(), z.boolean())).optional(),
     pushoverAppToken: z.string().max(30).optional(),
+    pushoverDefaultUser: z.string().max(30).optional(),
     pushoverDefaultSound: z.string().max(40).optional(),
     pushoverDefaultPriority: z.number().int().min(-2).max(2).optional(),
   }).optional(),

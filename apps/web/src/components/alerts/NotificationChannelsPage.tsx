@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, GripVertical, ArrowUpDown, ChevronDown, ChevronRight } from 'lucide-react';
 import NotificationChannelList, { type NotificationChannel } from './NotificationChannelList';
 import NotificationChannelForm, { type NotificationChannelFormValues } from './NotificationChannelForm';
+import AlertsTabStrip from './AlertsTabStrip';
 import { fetchWithAuth } from '../../stores/auth';
 import { useOrgStore } from '../../stores/orgStore';
 import { navigateTo } from '@/lib/navigation';
@@ -393,6 +394,7 @@ export default function NotificationChannelsPage() {
 
   return (
     <div className="space-y-6">
+      <AlertsTabStrip />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Notification Channels</h1>
