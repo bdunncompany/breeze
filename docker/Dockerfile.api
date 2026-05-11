@@ -14,6 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY . .
+ENV NODE_OPTIONS="--max-old-space-size=6144"
 RUN pnpm --filter @breeze/api build
 # Create a self-contained deployment (resolves pnpm symlinks)
 RUN pnpm --filter @breeze/api deploy --prod /deployed
