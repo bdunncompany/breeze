@@ -35,6 +35,10 @@ const validEnv = {
   ENROLLMENT_KEY_PEPPER: 'prod-test-enrollment-pepper-32-chars-min-strong-random',
   MFA_RECOVERY_CODE_PEPPER: 'prod-test-mfa-recovery-pepper-32-chars-min-strong-random',
   RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: 'prod-test-release-manifest-public-key',
+  // Production-required (#570 defense-in-depth): explicit boolean keeps the
+  // many "production happy-path" tests below from tripping the new check.
+  // Tests that assert the missing/invalid IS_HOSTED throw override this.
+  IS_HOSTED: 'true',
 };
 
 describe('validateConfig', () => {
@@ -390,6 +394,57 @@ describe('validateConfig', () => {
     }, () => {
       const config = validateConfig();
       expect(config.TRUST_PROXY_HEADERS).toBe('false');
+    });
+  });
+
+  // #570 defense-in-depth: IS_HOSTED gates the email-verification path in
+  // register.ts. A misconfigured deploy (env not mapped through compose)
+  // would silently drop new partners to status='active' and skip the
+  // verify gate. Fail loud at startup instead.
+  it('throws when IS_HOSTED is missing in production', () => {
+    // Empty string ↔ unset for this check (`(data.IS_HOSTED ?? '').trim()`),
+    // so this also covers the unset case without depending on shell state.
+    withEnv({
+      ...validEnv,
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: 'https://app.breeze.io',
+      TRUST_PROXY_HEADERS: 'true',
+      IS_HOSTED: '',
+    }, () => {
+      expect(() => validateConfig()).toThrow('IS_HOSTED');
+    });
+  });
+
+  it('throws when IS_HOSTED is set to a non-boolean string in production', () => {
+    withEnv({
+      ...validEnv,
+      NODE_ENV: 'production',
+      CORS_ALLOWED_ORIGINS: 'https://app.breeze.io',
+      TRUST_PROXY_HEADERS: 'true',
+      IS_HOSTED: 'maybe',
+    }, () => {
+      expect(() => validateConfig()).toThrow('IS_HOSTED');
+    });
+  });
+
+  it.each(['true', 'false', '1', '0', 'yes', 'no', 'on', 'off'])(
+    'accepts IS_HOSTED=%j in production',
+    (value) => {
+      withEnv({
+        ...validEnv,
+        NODE_ENV: 'production',
+        CORS_ALLOWED_ORIGINS: 'https://app.breeze.io',
+        TRUST_PROXY_HEADERS: 'true',
+        IS_HOSTED: value,
+      }, () => {
+        expect(() => validateConfig()).not.toThrow();
+      });
+    },
+  );
+
+  it('does not require IS_HOSTED outside production', () => {
+    withEnv({ ...validEnv, IS_HOSTED: '' }, () => {
+      expect(() => validateConfig()).not.toThrow();
     });
   });
 
