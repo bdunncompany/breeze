@@ -556,16 +556,22 @@ orgRoutes.get('/organizations', requireScope('organization', 'partner', 'system'
   });
 });
 
-// PATCH /organizations/reorder — partner-level preferred order of org IDs.
+// PATCH /organizations/order — partner-level preferred order of org IDs.
 // Persists to partners.settings.organizationOrder. Idempotent; the request
-// body fully replaces the current order. Unknown / no-longer-accessible IDs
-// are silently dropped.
+// body fully replaces the current order. Unknown IDs and IDs outside the
+// partner are silently dropped after server-side validation against the
+// partner's full org list.
+//
+// Path is a literal sub-segment (not /organizations/:id/...) so it must be
+// registered above the dynamic :id routes in this file; Hono matches in
+// registration order. Using `/order` rather than `/reorder` avoids any
+// literal-vs-param ambiguity with a future hypothetical `/:action`.
 const reorderOrganizationsSchema = z.object({
   orderedIds: z.array(z.string().uuid()).max(10_000),
 });
 
 orgRoutes.patch(
-  '/organizations/reorder',
+  '/organizations/order',
   requireScope('partner'),
   requirePartner,
   requireOrgWrite,

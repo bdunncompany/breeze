@@ -165,7 +165,7 @@ export default function OrganizationsPage() {
 
   const persistOrganizationOrder = useCallback(async (orderedIds: string[]) => {
     try {
-      const res = await fetchWithAuth('/orgs/organizations/reorder', {
+      const res = await fetchWithAuth('/orgs/organizations/order', {
         method: 'PATCH',
         body: JSON.stringify({ orderedIds })
       });

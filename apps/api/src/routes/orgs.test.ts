@@ -1298,7 +1298,7 @@ describe('org routes', () => {
 
   });
 
-  describe('PATCH /orgs/organizations/reorder', () => {
+  describe('PATCH /orgs/organizations/order', () => {
     const id1 = '00000000-0000-0000-0000-000000000001';
     const id2 = '00000000-0000-0000-0000-000000000002';
     const id3 = '00000000-0000-0000-0000-000000000003';
@@ -1336,7 +1336,7 @@ describe('org routes', () => {
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2, id3] });
       mockReorderHandler({ partnerOrgIds: [id1, id2, id3], currentSettings: {} });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [id3, id1, id2] })
@@ -1353,7 +1353,7 @@ describe('org routes', () => {
       // Partner-level allowlist (from DB) is the source of truth: id1, id2.
       mockReorderHandler({ partnerOrgIds: [id1, id2], currentSettings: {} });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [stranger, id2, id1] })
@@ -1373,7 +1373,7 @@ describe('org routes', () => {
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1] });
       mockReorderHandler({ partnerOrgIds: [id1, id2, id3], currentSettings: {} });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [id3, id1, id2] })
@@ -1411,7 +1411,7 @@ describe('org routes', () => {
       } as any);
       vi.mocked(db.update).mockReturnValueOnce({ set: setSpy } as any);
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [id2, id1] })
@@ -1427,7 +1427,7 @@ describe('org routes', () => {
     it('rejects a system-scoped caller', async () => {
       setAuthContext({ scope: 'system' });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [id1] })
@@ -1439,7 +1439,7 @@ describe('org routes', () => {
     it('rejects an organization-scoped caller', async () => {
       setAuthContext({ scope: 'organization' });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: [id1] })
@@ -1451,7 +1451,7 @@ describe('org routes', () => {
     it('rejects a non-uuid in the orderedIds array', async () => {
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1] });
 
-      const res = await app.request('/orgs/organizations/reorder', {
+      const res = await app.request('/orgs/organizations/order', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderedIds: ['not-a-uuid'] })
