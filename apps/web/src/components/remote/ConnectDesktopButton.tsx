@@ -1,11 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Monitor, MonitorOff, ExternalLink, Download, X, Globe } from 'lucide-react';
+import * as Sentry from '@sentry/astro';
 import type { DesktopAccessState, RemoteAccessPolicy } from '@breeze/shared';
 import { isAllowedLauncherScheme } from '@breeze/shared';
 import { fetchWithAuth } from '@/stores/auth';
 import { getViewerDownloadInfo, getAllViewerDownloads } from '@/lib/viewerDownload';
 import { buildRemoteVncPageUrl } from '@/lib/remoteTunnelUrls';
 import { extractApiError } from '@/lib/apiError';
+import { showToast } from '@/components/shared/Toast';
 
 interface Props {
   deviceId: string;
@@ -113,16 +115,16 @@ export default function ConnectDesktopButton({ deviceId, className = '', compact
       // WebRTC is now available. Re-fetch the device record right before
       // deciding so the click always uses fresh state.
       let liveDesktopAccess: DesktopAccessState | null = desktopAccess ?? null;
-      let remoteAccessLaunchUrl: string | null = null;
+      let hasRemoteAccessLauncher = false;
       try {
         const devRes = await fetchWithAuth(`/devices/${deviceId}`);
         if (devRes.ok) {
           const devBody = await devRes.json() as {
             desktopAccess?: DesktopAccessState | null;
-            remoteAccessLaunchUrl?: string | null;
+            hasRemoteAccessLauncher?: boolean;
           };
           liveDesktopAccess = devBody.desktopAccess ?? null;
-          remoteAccessLaunchUrl = devBody.remoteAccessLaunchUrl ?? null;
+          hasRemoteAccessLauncher = devBody.hasRemoteAccessLauncher === true;
         }
       } catch {
         // Network blip — fall back to the prop so the connect flow still runs.
@@ -130,31 +132,74 @@ export default function ConnectDesktopButton({ deviceId, className = '', compact
 
       // If the partner has configured a third-party remote-tool provider
       // (RustDesk, ScreenConnect, TeamViewer, etc.) and this device has the
-      // matching per-device identifier in its custom_fields, the API has
-      // already built the launch URL with any preset password substituted
-      // and percent-encoded. Auto-detect launch mode by URL prefix:
+      // matching per-device identifier in its custom_fields, request the
+      // one-shot launch URL from POST /devices/:id/remote-access-launch.
+      // The URL (with any preset password substituted and percent-encoded)
+      // is never embedded in the GET response so we only get it back in
+      // response to an explicit click. Each issuance is audited server-side.
+      //
+      // Auto-detect launch mode by URL prefix:
       //   - http(s):// → open in a new browser tab (ScreenConnect, web-launchers)
       //   - any other scheme → hand off to the OS protocol handler (RustDesk, etc.)
       // Either way, skip the built-in WebRTC desktop flow.
       //
-      // Defense in depth: the API validator rejects javascript:, data:,
-      // vbscript:, file:, etc. at write time, but we re-check the scheme on
-      // the client before firing so a stale row from a pre-validator era,
-      // a future API regression, or a tampered response can't execute a
-      // hostile scheme in the partner's origin.
-      if (remoteAccessLaunchUrl && isAllowedLauncherScheme(remoteAccessLaunchUrl)) {
-        setStatus('launching');
-        if (/^https?:\/\//i.test(remoteAccessLaunchUrl)) {
-          window.open(remoteAccessLaunchUrl, '_blank', 'noopener,noreferrer');
-        } else {
-          tryDeepLink(remoteAccessLaunchUrl);
+      // Defense in depth: the API rejects javascript:, data:, vbscript:,
+      // file:, etc. at write time AND re-checks the substituted URL before
+      // returning 422. We still re-check on the client so a tampered
+      // response can't execute a hostile scheme in the partner's origin.
+      if (hasRemoteAccessLauncher) {
+        const launchRes = await fetchWithAuth(`/devices/${deviceId}/remote-access-launch`, {
+          method: 'POST',
+        });
+
+        if (launchRes.status === 422) {
+          // Server detected a tampered template that resolved to a
+          // disallowed scheme after substitution. The server already
+          // emitted an audit event and Sentry capture. Surface a loud
+          // user-facing error rather than silently falling back.
+          const body = await launchRes.json().catch(() => ({} as { code?: string }));
+          Sentry.captureMessage(
+            'Remote-access launcher rejected by scheme policy',
+            { level: 'warning', extra: { deviceId, code: body?.code } },
+          );
+          showToast({
+            type: 'error',
+            message: 'Remote launch unavailable: security check failed. Please contact your administrator.',
+          });
+          setError('Remote launch blocked by security policy');
+          setStatus('idle');
+          return;
         }
-        setTimeout(() => setStatus('idle'), 1500);
-        return;
-      } else if (remoteAccessLaunchUrl) {
-        // URL came back with a disallowed scheme — fall through to the
-        // built-in WebRTC flow rather than fire something dangerous.
-        console.warn('[ConnectDesktop] Refusing to fire remote-access URL with disallowed scheme; falling back to built-in.');
+
+        if (launchRes.ok) {
+          const body = await launchRes.json() as { launchUrl?: string; scheme?: string };
+          const url = body?.launchUrl;
+          if (typeof url === 'string' && isAllowedLauncherScheme(url)) {
+            setStatus('launching');
+            if (/^https?:\/\//i.test(url)) {
+              window.open(url, '_blank', 'noopener,noreferrer');
+            } else {
+              tryDeepLink(url);
+            }
+            setTimeout(() => setStatus('idle'), 1500);
+            return;
+          }
+          // Defense in depth: server should have returned 422, but the
+          // URL we got back has a disallowed scheme. Refuse the click.
+          Sentry.captureMessage(
+            'Remote-access launcher returned disallowed scheme client-side',
+            { level: 'warning', extra: { deviceId } },
+          );
+          showToast({
+            type: 'error',
+            message: 'Remote launch unavailable: security check failed. Please contact your administrator.',
+          });
+          setError('Remote launch blocked by security policy');
+          setStatus('idle');
+          return;
+        }
+        // Non-OK, non-422 (e.g., 404 stale UI, 500). Fall through to the
+        // built-in WebRTC flow so the device is still reachable.
       }
 
       // Auto-detect: fall back to VNC when the WebRTC path can't work but VNC relay is enabled.
