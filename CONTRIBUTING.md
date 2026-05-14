@@ -75,11 +75,18 @@ make build-all # Cross-platform builds
    pnpm build --filter=@breeze/api                           # CI: Build API
    pnpm build --filter=@breeze/web                           # CI: Build Web
    (cd agent && CGO_ENABLED=0 go test ./...)                 # CI: Test Agent
+   pnpm db:check-drift                                       # CI: Check Migrations
+   bash scripts/security/check-supply-chain-hardening.sh     # CI: Security Audit
    ```
 
    On dev hosts with ≤ 8 GiB RAM, prefix the API build with
    `NODE_OPTIONS=--max-old-space-size=4096` to avoid an OOM in the tsup
    DTS-generation step.
+
+   The supply-chain guard catches issues like Node base-image version
+   drift between the Dockerfiles and the guard's pinned regex — a
+   mismatch only surfaces on pull_request CI, so running it locally
+   prevents a "passes locally, red on PR" surprise.
 5. Submit a PR against `main`
 
 ### Commit Messages
