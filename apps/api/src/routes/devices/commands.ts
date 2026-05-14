@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
 import { eq, sql, desc, and } from 'drizzle-orm';
 import { db } from '../../db';
 import { deviceCommands, devices } from '../../db/schema';
@@ -13,6 +14,8 @@ import { commandAuditDetails, sanitizeCommandForHistory } from '../../services/c
 export const commandsRoutes = new Hono();
 
 commandsRoutes.use('*', authMiddleware);
+
+const COMMAND_SET_AUTO_UPDATE = 'set_auto_update';
 
 function canAccessDeviceSite(device: { siteId?: string | null }, userPerms: UserPermissions | undefined): boolean {
   if (!userPerms?.allowedSiteIds) return true;
@@ -202,6 +205,70 @@ commandsRoutes.post(
     });
 
     return c.json({ success: true, device: updatedDevice });
+  }
+);
+
+
+// POST /devices/:id/auto-update - Set auto_update configuration
+commandsRoutes.post(
+  '/:id/auto-update',
+  requireScope('organization', 'partner', 'system'),
+  requirePermission(PERMISSIONS.DEVICES_EXECUTE.resource, PERMISSIONS.DEVICES_EXECUTE.action),
+  requireMfa(),
+  zValidator('json', z.object({ enabled: z.boolean() })),
+  async (c) => {
+    const auth = c.get('auth');
+    const deviceId = c.req.param('id')!;
+    const data = c.req.valid('json');
+
+    const device = await getDeviceWithOrgCheck(deviceId, auth);
+    if (!device) {
+      return c.json({ error: 'Device not found' }, 404);
+    }
+
+    if (device.status === 'decommissioned') {
+      return c.json({ error: 'Cannot send commands to a decommissioned device' }, 400);
+    }
+
+    if (!canAccessDeviceSite(device, c.get('permissions') as UserPermissions | undefined)) {
+      return c.json({ error: 'Access to this site denied' }, 403);
+    }
+
+    const [command] = await db
+      .insert(deviceCommands)
+      .values({
+        deviceId,
+        type: COMMAND_SET_AUTO_UPDATE,
+        payload: { enabled: data.enabled },
+        status: 'pending',
+        createdBy: auth.user.id
+      })
+      .returning();
+
+    if (!command) {
+      return c.json({ error: 'Failed to queue command' }, 500);
+    }
+
+    writeRouteAudit(c, {
+      orgId: device.orgId,
+      action: 'device.auto_update.set',
+      resourceType: 'device_command',
+      resourceId: command.id,
+      resourceName: 'set_auto_update',
+      details: {
+        deviceId,
+        enabled: data.enabled,
+        ...commandAuditDetails(command.id, 'set_auto_update', { enabled: data.enabled })
+      }
+    });
+
+    return c.json({
+      id: command.id,
+      deviceId: command.deviceId,
+      type: command.type,
+      status: command.status,
+      createdAt: command.createdAt
+    }, 201);
   }
 );
 

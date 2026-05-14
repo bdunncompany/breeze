@@ -327,5 +327,70 @@ describe('device commands routes', () => {
       expect(res.status).toBe(403);
       expect(db.select).not.toHaveBeenCalled();
     });
+
+  describe('POST /devices/:id/auto-update', () => {
+    it('queues set_auto_update command when enabled=true', async () => {
+      vi.mocked(getDeviceWithOrgCheck).mockResolvedValueOnce({
+        id: 'device-a',
+        orgId: 'org-123',
+        hostname: 'test-host',
+        status: 'online'
+      } as never);
+
+      vi.mocked(db.insert).mockReturnValueOnce({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{
+            id: 'cmd-456',
+            deviceId: 'device-a',
+            type: 'set_auto_update',
+            status: 'pending',
+            payload: { enabled: true },
+            createdAt: new Date()
+          }])
+        })
+      } as never);
+
+      const res = await app.request('/devices/device-a/auto-update', {
+        method: 'POST',
+        headers: { 
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled: true })
+      });
+
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.id).toBe('cmd-456');
+      expect(body.deviceId).toBe('device-a');
+      expect(body.type).toBe('set_auto_update');
+      expect(body.status).toBe('pending');
+      expect(body.createdAt).toBeDefined();  // Date handling in response
+      expect(db.insert).toHaveBeenCalled();
+    });
+
+    it('rejects command for decommissioned device', async () => {
+      vi.mocked(getDeviceWithOrgCheck).mockResolvedValueOnce({
+        id: 'device-a',
+        orgId: 'org-123',
+        status: 'decommissioned'
+      } as never);
+
+      const res = await app.request('/devices/device-a/auto-update', {
+        method: 'POST',
+        headers: { 
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ enabled: true })
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toContain('decommissioned');
+
+    });
+  });
+
   });
 });
