@@ -69,24 +69,31 @@ make build-all # Cross-platform builds
    pnpm install --frozen-lockfile
    pnpm lint                                                 # CI: Lint
    pnpm exec tsc --noEmit --project apps/api/tsconfig.json   # CI: Type Check
-   pnpm exec astro check                                     # CI: Type Check
+   pnpm --filter=@breeze/web exec astro check                # CI: Type Check
    pnpm test --filter=@breeze/api                            # CI: Test API
    pnpm test --filter=@breeze/web                            # CI: Test Web
    pnpm build --filter=@breeze/api                           # CI: Build API
    pnpm build --filter=@breeze/web                           # CI: Build Web
    (cd agent && CGO_ENABLED=0 go test ./...)                 # CI: Test Agent
-   pnpm db:check-drift                                       # CI: Check Migrations
-   bash scripts/security/check-supply-chain-hardening.sh     # CI: Security Audit
+   pnpm db:check-drift                                       # CI: Lint (drift, non-blocking)
+   pnpm --filter @breeze/api run check:migrations            # CI: Check Migrations (needs local Postgres)
+   pnpm audit --audit-level=critical                         # CI: Security Audit (npm advisories)
+   bash scripts/security/check-supply-chain-hardening.sh     # CI: Security Audit (hardening guard)
+   bash scripts/security/check-relay-edge-hardening.sh       # CI: Security Audit (relay/edge guard)
    ```
+
+   The `check:migrations` step needs a running Postgres and `DATABASE_URL`
+   set; `docker compose up -d postgres` from the Development Setup section
+   above is enough.
 
    On dev hosts with ≤ 8 GiB RAM, prefix the API build with
    `NODE_OPTIONS=--max-old-space-size=4096` to avoid an OOM in the tsup
    DTS-generation step.
 
-   The supply-chain guard catches issues like Node base-image version
-   drift between the Dockerfiles and the guard's pinned regex — a
-   mismatch only surfaces on pull_request CI, so running it locally
-   prevents a "passes locally, red on PR" surprise.
+   The supply-chain and relay/edge guards catch regressions like base-image
+   pinning drift, mutable tag defaults, and unauthorized auto-update
+   labels — issues that otherwise only surface on PR CI (the Security
+   Audit job runs on `pull_request` events).
 5. Submit a PR against `main`
 
 ### Commit Messages
