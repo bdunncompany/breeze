@@ -1,5 +1,5 @@
 FROM node:26-alpine@sha256:e71ac5e964b9201072425d59d2e876359efa25dc96bb1768cb73295728d6e4ea AS base
-RUN npm install -g pnpm@9.15.7
+RUN npm install -g pnpm@10.33.4
 
 FROM base AS deps
 WORKDIR /app
@@ -16,7 +16,7 @@ COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_module
 COPY . .
 RUN pnpm --filter @breeze/api build
 # Create a self-contained deployment (resolves pnpm symlinks)
-RUN pnpm --filter @breeze/api deploy --prod /deployed
+RUN pnpm --filter @breeze/api deploy --legacy --prod /deployed
 
 FROM base AS runner
 WORKDIR /app
