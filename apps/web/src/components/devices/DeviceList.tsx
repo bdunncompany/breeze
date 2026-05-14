@@ -902,7 +902,7 @@ export default function DeviceList({
                 onChange={event => handlePageSizeChange(Number(event.target.value))}
                 aria-label="Devices per page"
                 data-testid="devices-page-size-select"
-                className="h-8 rounded-md border bg-background px-2 text-sm"
+                className="h-10 min-w-[100px] rounded-md border bg-background pl-2 pr-8 text-sm"
               >
                 {DEVICES_PAGE_SIZE_OPTIONS.map(size => (
                   <option key={size} value={size}>{size}</option>
