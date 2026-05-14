@@ -475,6 +475,7 @@ export default function OrganizationsPage() {
                   return (
                   <li
                     key={org.id}
+                    data-testid={`org-row-${org.id}`}
                     onClick={() => handleSelectOrg(org)}
                     draggable={dragEnabled}
                     onDragStart={dragEnabled ? (e) => handleOrgDragStart(e, org) : undefined}
@@ -491,6 +492,7 @@ export default function OrganizationsPage() {
                     <div className="flex items-start justify-between gap-2">
                       {dragEnabled && (
                         <span
+                          data-testid="org-drag-handle"
                           className="mt-0.5 cursor-grab text-muted-foreground/40 opacity-0 transition group-hover:opacity-100 active:cursor-grabbing"
                           title="Drag to reorder"
                           aria-hidden="true"
