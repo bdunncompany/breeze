@@ -720,6 +720,106 @@ describe('org routes', () => {
 
       expect(res.status).toBe(403);
     });
+
+    // Discussion #628 — over-validation relaxations.
+    // The schema previously required ten fields on the form side and accepted
+    // anything for `contact` on the API side. Below: name-only POST succeeds
+    // (zod's `timezone.default('UTC')` fills in the omission), invalid IANA
+    // strings are rejected, and an invalid contact email is rejected while a
+    // phone-only contact is accepted.
+    it('accepts a name-only POST (no address, no contact, no timezone)', async () => {
+      setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
+      vi.mocked(db.insert).mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{ id: 'site-2', name: 'Remote-LA' }])
+        })
+      } as any);
+
+      const res = await app.request('/orgs/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: '11111111-1111-1111-1111-111111111111',
+          name: 'Remote-LA'
+        })
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('rejects an invalid IANA timezone', async () => {
+      setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
+
+      const res = await app.request('/orgs/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: '11111111-1111-1111-1111-111111111111',
+          name: 'Mars-HQ',
+          timezone: 'Mars/Olympus_Mons'
+        })
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects an invalid contact email format', async () => {
+      setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
+
+      const res = await app.request('/orgs/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: '11111111-1111-1111-1111-111111111111',
+          name: 'HQ',
+          contact: { email: 'not-an-email' }
+        })
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('accepts a phone-only contact (no email)', async () => {
+      setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
+      vi.mocked(db.insert).mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{ id: 'site-3', name: 'Site C' }])
+        })
+      } as any);
+
+      const res = await app.request('/orgs/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: '11111111-1111-1111-1111-111111111111',
+          name: 'Site C',
+          contact: { phone: '555-1212' }
+        })
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('accepts a contact with empty-string email (form sends empty for absent)', async () => {
+      setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
+      vi.mocked(db.insert).mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([{ id: 'site-4', name: 'Site D' }])
+        })
+      } as any);
+
+      const res = await app.request('/orgs/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: '11111111-1111-1111-1111-111111111111',
+          name: 'Site D',
+          contact: { name: 'Ops', email: '', phone: '+1 555 1212' }
+        })
+      });
+
+      expect(res.status).toBe(201);
+    });
   });
 
   describe('GET /orgs/sites/:id', () => {

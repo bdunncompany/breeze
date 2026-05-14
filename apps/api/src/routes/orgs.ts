@@ -63,17 +63,47 @@ const listSitesSchema = z.object({
   limit: z.string().optional()
 });
 
+// Timezone validation defers to the JS engine: a string is a valid timezone
+// iff Intl.DateTimeFormat accepts it as a `timeZone` option. This covers
+// every named IANA zone (e.g. America/Los_Angeles), the special aliases UTC
+// and GMT, and the Etc/* synthetic zones — all of which Intl.supportedValuesOf
+// notably omits, so a Set-membership check against that list incorrectly
+// rejects 'UTC' (the form's default). Constructor cost is negligible on
+// invalid input; the engine throws RangeError fast. Centralized inline
+// rather than extracted to a shared validator until a second use-site
+// materializes (likely org settings); see Discussion #628.
+function isValidIanaTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Contact JSONB is stored as-is for forward compatibility, but the recognized
+// fields are validated. Email format is policed when present so that
+// `mailto:` consumers downstream don't render garbage. Extra fields beyond
+// name/email/phone pass through. Discussion #628.
+const siteContactSchema = z
+  .object({
+    name: z.string().optional(),
+    email: z.union([z.string().email(), z.literal('')]).optional(),
+    phone: z.string().optional(),
+  })
+  .passthrough();
+
 const siteBaseSchema = z.object({
   orgId: z.string().uuid(),
   name: z.string().min(1),
   address: z.any().optional(),
-  timezone: z.string().optional(),
-  contact: z.any().optional(),
+  timezone: z.string().refine(isValidIanaTimezone, 'Invalid IANA timezone').optional(),
+  contact: siteContactSchema.optional(),
   settings: z.any().optional()
 });
 
 const createSiteSchema = siteBaseSchema.extend({
-  timezone: z.string().default('UTC')
+  timezone: z.string().refine(isValidIanaTimezone, 'Invalid IANA timezone').default('UTC')
 });
 
 const updateSiteSchema = siteBaseSchema.partial().omit({ orgId: true });

@@ -3,18 +3,27 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
+// Only `name` is required by the API and the database (timezone defaults to
+// 'UTC' server-side). The form previously over-validated by marking 10 fields
+// as required, blocking legitimate cases like cloud-only sites, remote
+// employee home offices, and day-one onboarding where the operator wants to
+// fill in address/contact later. Discussion #628.
+//
+// Contact email is allowed to be empty; if the user enters something, it must
+// be a valid email format. Contact phone has no length floor — phones are
+// stored as-is and not format-validated elsewhere in the codebase.
 const siteSchema = z.object({
   name: z.string().min(1, 'Site name is required'),
-  timezone: z.string().min(1, 'Timezone is required'),
-  addressLine1: z.string().min(1, 'Address line 1 is required'),
+  timezone: z.string().optional(),
+  addressLine1: z.string().optional(),
   addressLine2: z.string().optional(),
-  city: z.string().min(1, 'City is required'),
-  state: z.string().min(1, 'State/Region is required'),
-  postalCode: z.string().min(1, 'Postal code is required'),
-  country: z.string().min(1, 'Country is required'),
-  contactName: z.string().min(1, 'Contact name is required'),
-  contactEmail: z.string().email('Enter a valid email address'),
-  contactPhone: z.string().min(7, 'Enter a phone number')
+  city: z.string().optional(),
+  state: z.string().optional(),
+  postalCode: z.string().optional(),
+  country: z.string().optional(),
+  contactName: z.string().optional(),
+  contactEmail: z.union([z.string().email('Enter a valid email address'), z.literal('')]).optional(),
+  contactPhone: z.string().optional()
 });
 
 type SiteFormValues = z.infer<typeof siteSchema>;
@@ -78,6 +87,9 @@ export default function SiteForm({
       })}
       className="space-y-6 rounded-lg border bg-card p-6 shadow-sm"
     >
+      <p className="text-sm text-muted-foreground">
+        Only the site name is required. Address and contact are optional — you can fill these in later.
+      </p>
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-2">
           <label htmlFor="site-name" className="text-sm font-medium">
