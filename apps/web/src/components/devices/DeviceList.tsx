@@ -52,6 +52,21 @@ type DeviceListProps = {
   serverFilter?: FilterConditionGroup | null;
 };
 
+export const DEVICES_PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200] as const;
+export const DEVICES_PAGE_SIZE_STORAGE_KEY = 'breeze.devices.pageSize';
+
+function readPersistedPageSize(fallback: number): number {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(DEVICES_PAGE_SIZE_STORAGE_KEY);
+    if (raw === null) return fallback;
+    const n = Number.parseInt(raw, 10);
+    return (DEVICES_PAGE_SIZE_OPTIONS as readonly number[]).includes(n) ? n : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const statusColors: Record<DeviceStatus, string> = {
   online: 'bg-success/15 text-success border-success/30',
   offline: 'bg-destructive/15 text-destructive border-destructive/30',
@@ -108,6 +123,18 @@ export default function DeviceList({
   const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
   const groupDropdownRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [effectivePageSize, setEffectivePageSize] = useState<number>(() => readPersistedPageSize(pageSize));
+
+  const handlePageSizeChange = (next: number) => {
+    setEffectivePageSize(next);
+    setCurrentPage(1);
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(DEVICES_PAGE_SIZE_STORAGE_KEY, String(next));
+    } catch {
+      // localStorage may be unavailable (private mode, quota); state still wins for this session.
+    }
+  };
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const [rowMenuOpenId, setRowMenuOpenId] = useState<string | null>(null);
@@ -264,9 +291,9 @@ export default function DeviceList({
 
   const moreFiltersCount = [roleFilter, orgFilter, siteFilter].filter(f => f !== 'all').length + (groupFilter.length > 0 ? 1 : 0);
 
-  const totalPages = Math.ceil(sortedDevices.length / pageSize);
-  const startIndex = (currentPage - 1) * pageSize;
-  const paginatedDevices = sortedDevices.slice(startIndex, startIndex + pageSize);
+  const totalPages = Math.max(1, Math.ceil(sortedDevices.length / effectivePageSize));
+  const startIndex = (currentPage - 1) * effectivePageSize;
+  const paginatedDevices = sortedDevices.slice(startIndex, startIndex + effectivePageSize);
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -862,32 +889,50 @@ export default function DeviceList({
         </table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Showing {startIndex + 1} to {Math.min(startIndex + pageSize, sortedDevices.length)} of {sortedDevices.length}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm">
-              Page {currentPage} of {totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              className="flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+      {sortedDevices.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-muted-foreground">
+              Showing {sortedDevices.length === 0 ? 0 : startIndex + 1} to {Math.min(startIndex + effectivePageSize, sortedDevices.length)} of {sortedDevices.length}
+            </p>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Per page</span>
+              <select
+                value={effectivePageSize}
+                onChange={event => handlePageSizeChange(Number(event.target.value))}
+                aria-label="Devices per page"
+                data-testid="devices-page-size-select"
+                className="h-8 rounded-md border bg-background px-2 text-sm"
+              >
+                {DEVICES_PAGE_SIZE_OPTIONS.map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="text-sm">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="flex h-9 w-9 items-center justify-center rounded-md border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
