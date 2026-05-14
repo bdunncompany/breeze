@@ -62,7 +62,24 @@ make build-all # Cross-platform builds
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Run tests: `pnpm test` (TypeScript), `cd agent && make test` (Go)
+4. Mirror the CI gate locally before pushing. Each line maps 1:1 to a job
+   in `.github/workflows/ci.yml`:
+
+   ```bash
+   pnpm install --frozen-lockfile
+   pnpm lint                                                 # CI: Lint
+   pnpm exec tsc --noEmit --project apps/api/tsconfig.json   # CI: Type Check
+   pnpm exec astro check                                     # CI: Type Check
+   pnpm test --filter=@breeze/api                            # CI: Test API
+   pnpm test --filter=@breeze/web                            # CI: Test Web
+   pnpm build --filter=@breeze/api                           # CI: Build API
+   pnpm build --filter=@breeze/web                           # CI: Build Web
+   (cd agent && CGO_ENABLED=0 go test ./...)                 # CI: Test Agent
+   ```
+
+   On dev hosts with ≤ 8 GiB RAM, prefix the API build with
+   `NODE_OPTIONS=--max-old-space-size=4096` to avoid an OOM in the tsup
+   DTS-generation step.
 5. Submit a PR against `main`
 
 ### Commit Messages
