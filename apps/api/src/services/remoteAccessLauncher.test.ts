@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRemoteAccessLaunchUrl } from './remoteAccessLauncher';
+import { buildRemoteAccessLaunchUrl, resolveRemoteAccessLaunch } from './remoteAccessLauncher';
 import type { InheritableRemoteAccessSettings, RemoteAccessProvider } from '@breeze/shared';
 
 const baseProvider: RemoteAccessProvider = {
@@ -140,6 +140,57 @@ describe('buildRemoteAccessLaunchUrl', () => {
     expect(
       buildRemoteAccessLaunchUrl({ customFields: { rustdesk_id: '1' } }, empty),
     ).toBeNull();
+  });
+
+  it('resolveRemoteAccessLaunch reports skipReason=no_provider_configured when settings empty', () => {
+    expect(resolveRemoteAccessLaunch({ customFields: {} }, undefined).skipReason).toBe('no_provider_configured');
+    expect(resolveRemoteAccessLaunch({ customFields: {} }, {}).skipReason).toBe('no_provider_configured');
+  });
+
+  it('resolveRemoteAccessLaunch reports skipReason=provider_disabled when default provider is disabled', () => {
+    const disabled: InheritableRemoteAccessSettings = {
+      ...rustdeskSettings,
+      providers: [{ ...baseProvider, enabled: false }],
+    };
+    const r = resolveRemoteAccessLaunch({ customFields: { rustdesk_id: '1' } }, disabled);
+    expect(r.skipReason).toBe('provider_disabled');
+    expect(r.providerId).toBe('rustdesk');
+  });
+
+  it('resolveRemoteAccessLaunch reports skipReason=missing_device_identifier when custom field absent', () => {
+    const r = resolveRemoteAccessLaunch({ customFields: {} }, rustdeskSettings);
+    expect(r.skipReason).toBe('missing_device_identifier');
+    expect(r.providerId).toBe('rustdesk');
+  });
+
+  it('resolveRemoteAccessLaunch reports skipReason=scheme_not_allowed when substituted URL has disallowed scheme', () => {
+    const sneaky: InheritableRemoteAccessSettings = {
+      defaultProviderId: 'sneaky',
+      providers: [
+        {
+          id: 'sneaky',
+          name: 'Sneaky',
+          urlTemplate: 'j{id}cript:alert(1)',
+          customFieldKey: 'k',
+          enabled: true,
+        },
+      ],
+    };
+    const r = resolveRemoteAccessLaunch({ customFields: { k: 'avas' } }, sneaky);
+    expect(r.skipReason).toBe('scheme_not_allowed');
+    expect(r.launchUrl).toBeNull();
+    expect(r.providerId).toBe('sneaky');
+  });
+
+  it('resolveRemoteAccessLaunch returns scheme alongside launchUrl on success', () => {
+    const r = resolveRemoteAccessLaunch(
+      { customFields: { rustdesk_id: '294064193' } },
+      rustdeskSettings,
+    );
+    expect(r.launchUrl).toBe('rustdesk://294064193?password=plain');
+    expect(r.scheme).toBe('rustdesk');
+    expect(r.providerId).toBe('rustdesk');
+    expect(r.skipReason).toBeNull();
   });
 
   it('refuses templates whose substituted URL resolves to a disallowed scheme', () => {
