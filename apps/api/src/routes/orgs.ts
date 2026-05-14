@@ -575,8 +575,24 @@ orgRoutes.patch(
     const { orderedIds } = c.req.valid('json');
     const partnerId = auth.partnerId as string;
 
-    const accessibleOrgIds = auth.accessibleOrgIds ?? [];
-    const sanitized = sanitizeOrganizationOrder(orderedIds, accessibleOrgIds);
+    // Sanitize against the full set of non-deleted orgs that belong to this
+    // partner — NOT against auth.accessibleOrgIds. A partner-admin token with
+    // an RBAC-restricted org subset must still be able to persist an order
+    // that covers every partner org; otherwise legitimate orgs would be
+    // silently dropped from the saved order whenever the actor's scope is
+    // narrower than the partner's full org list.
+    //
+    // Use withSystemDbAccessContext to bypass RLS for this admin-level read;
+    // partner-scope authority has already been enforced by requireScope and
+    // requirePartner above.
+    const partnerOrgs = await withSystemDbAccessContext(async () =>
+      db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(and(eq(organizations.partnerId, partnerId), isNull(organizations.deletedAt)))
+    );
+    const validOrgIds = partnerOrgs.map((o) => o.id);
+    const sanitized = sanitizeOrganizationOrder(orderedIds, validOrgIds);
 
     const [current] = await db
       .select({ settings: partners.settings })

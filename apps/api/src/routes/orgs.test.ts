@@ -1303,11 +1303,23 @@ describe('org routes', () => {
     const id2 = '00000000-0000-0000-0000-000000000002';
     const id3 = '00000000-0000-0000-0000-000000000003';
 
-    function mockReadModifyWrite(currentSettings: Record<string, unknown>) {
+    // The handler issues two `db.select` calls in order:
+    //   1) list of partner orgs (sanitization allowlist)   — chain: from→where (awaited)
+    //   2) read current partner settings (read-modify-write) — chain: from→where→limit (awaited)
+    // Mock them in that order.
+    function mockReorderHandler(opts: {
+      partnerOrgIds: string[];
+      currentSettings: Record<string, unknown>;
+    }) {
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(opts.partnerOrgIds.map((id) => ({ id })))
+        })
+      } as any);
       vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ settings: currentSettings }])
+            limit: vi.fn().mockResolvedValue([{ settings: opts.currentSettings }])
           })
         })
       } as any);
@@ -1322,7 +1334,7 @@ describe('org routes', () => {
 
     it('persists a sanitized order and returns 200', async () => {
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2, id3] });
-      mockReadModifyWrite({});
+      mockReorderHandler({ partnerOrgIds: [id1, id2, id3], currentSettings: {} });
 
       const res = await app.request('/orgs/organizations/reorder', {
         method: 'PATCH',
@@ -1335,10 +1347,11 @@ describe('org routes', () => {
       expect(body.organizationOrder).toEqual([id3, id1, id2]);
     });
 
-    it('drops IDs that are not in the caller accessible orgs', async () => {
+    it('drops IDs that do not belong to the partner', async () => {
       const stranger = '99999999-9999-9999-9999-999999999999';
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2] });
-      mockReadModifyWrite({});
+      // Partner-level allowlist (from DB) is the source of truth: id1, id2.
+      mockReorderHandler({ partnerOrgIds: [id1, id2], currentSettings: {} });
 
       const res = await app.request('/orgs/organizations/reorder', {
         method: 'PATCH',
@@ -1351,6 +1364,28 @@ describe('org routes', () => {
       expect(body.organizationOrder).toEqual([id2, id1]);
     });
 
+    // Regression test for the tenant-boundary fix: a partner admin whose JWT
+    // accessibleOrgIds is narrower than the partner's full org list must be
+    // able to persist an order that includes every partner org. Sanitization
+    // is done against the DB-resolved partner org list, NOT auth.accessibleOrgIds.
+    it('preserves partner orgs not present in caller accessibleOrgIds (tenant-boundary fix)', async () => {
+      // Caller can only "see" id1 via RBAC, but the partner owns id1, id2, id3.
+      setAuthContext({ scope: 'partner', accessibleOrgIds: [id1] });
+      mockReorderHandler({ partnerOrgIds: [id1, id2, id3], currentSettings: {} });
+
+      const res = await app.request('/orgs/organizations/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: [id3, id1, id2] })
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // All three partner orgs survive — id2 and id3 would have been dropped
+      // under the old auth.accessibleOrgIds-based sanitization.
+      expect(body.organizationOrder).toEqual([id3, id1, id2]);
+    });
+
     it('preserves other partner settings when merging', async () => {
       setAuthContext({ scope: 'partner', accessibleOrgIds: [id1, id2] });
       const setSpy = vi.fn().mockReturnValue({
@@ -1358,6 +1393,13 @@ describe('org routes', () => {
           returning: vi.fn().mockResolvedValue([{ id: 'partner-123', name: 'Acme' }])
         })
       });
+      // 1) Partner orgs allowlist
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ id: id1 }, { id: id2 }])
+        })
+      } as any);
+      // 2) Current partner settings
       vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
