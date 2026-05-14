@@ -11,6 +11,7 @@ import { clearPartnerScopePolicyCache } from '../oauth/partnerScopePolicy';
 import { PERMISSIONS } from '../services/permissions';
 import { revokeOrganizationTenantAccess, revokePartnerTenantAccess } from '../services/tenantLifecycle';
 import { applyOrganizationOrder, sanitizeOrganizationOrder } from '../services/orgOrdering';
+import { captureException } from '../services/sentry';
 
 export const orgRoutes = new Hono();
 const requireOrgRead = requirePermission(PERMISSIONS.ORGS_READ.resource, PERMISSIONS.ORGS_READ.action);
@@ -545,8 +546,16 @@ orgRoutes.get('/organizations', requireScope('organization', 'partner', 'system'
       const preferredOrder = (settingsRow?.settings as { organizationOrder?: string[] } | undefined)
         ?.organizationOrder;
       ordered = applyOrganizationOrder(data, preferredOrder);
-    } catch {
-      // Soft-fail: if we can't load partner settings, fall back to createdAt order.
+    } catch (err) {
+      // Soft-fail: if we can't load partner settings, fall back to createdAt
+      // order so the list still renders. Surface the failure to stderr and
+      // Sentry so a chronically broken partner_settings read is observable
+      // on-call rather than silently degrading every list response.
+      console.error('[orgs.list.partnerSettings] Failed to load partner settings for org ordering', {
+        partnerId: orderPartnerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      captureException(err, c);
     }
   }
 

@@ -4,6 +4,11 @@ import { orgRoutes } from './orgs';
 
 vi.mock('../services', () => ({}));
 
+vi.mock('../services/sentry', () => ({
+  captureException: vi.fn(),
+  isSentryEnabled: vi.fn().mockReturnValue(false)
+}));
+
 vi.mock('../services/tenantLifecycle', () => ({
   revokePartnerTenantAccess: vi.fn().mockResolvedValue({
     apiKeysRevoked: 0,
@@ -86,6 +91,7 @@ vi.mock('../middleware/auth', () => ({
 import { db } from '../db';
 import { authMiddleware } from '../middleware/auth';
 import { revokeOrganizationTenantAccess, revokePartnerTenantAccess } from '../services/tenantLifecycle';
+import { captureException } from '../services/sentry';
 
 describe('org routes', () => {
   let app: Hono;
@@ -1458,6 +1464,60 @@ describe('org routes', () => {
       });
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  // Regression test for the partner-settings load-failure observability fix:
+  // when the partner-settings read inside GET /organizations throws, the
+  // handler must still return the org list (soft-fail to createdAt order) AND
+  // surface the failure via console.error + captureException so on-call can
+  // see chronically broken settings reads.
+  describe('GET /orgs/organizations partner-settings soft-fail', () => {
+    it('logs and captures when the partner-settings read throws', async () => {
+      setAuthContext({ scope: 'partner', partnerId: 'partner-123', accessibleOrgIds: ['org-1'] });
+
+      // 1) count query
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ count: 1 }])
+        })
+      } as any);
+      // 2) main list query
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              offset: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockResolvedValue([{ id: 'org-1', name: 'Org 1' }])
+              })
+            })
+          })
+        })
+      } as any);
+      // 3) partner-settings read — throws
+      vi.mocked(db.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockRejectedValue(new Error('db blew up'))
+          })
+        })
+      } as any);
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const captureSpy = vi.mocked(captureException);
+
+      const res = await app.request('/orgs/organizations?page=1&limit=10');
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data).toHaveLength(1);
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('orgs.list.partnerSettings'),
+        expect.objectContaining({ partnerId: 'partner-123' })
+      );
+      expect(captureSpy).toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
   });
 });
