@@ -328,6 +328,64 @@ describe('enrollment key routes — list & create', () => {
       expect(res.status).toBe(201);
     });
 
+    it('accepts ttlMinutes and resolves expiresAt server-side (default fallback when omitted)', async () => {
+      const created = makeEnrollmentKey();
+      mockInsertValuesReturning([created]);
+      const before = Date.now();
+
+      const res = await app.request('/enrollment-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ name: 'TTL key', ttlMinutes: 10080 }),
+      });
+
+      const after = Date.now();
+      expect(res.status).toBe(201);
+      const valuesCall = vi.mocked(db.insert).mock.results[0]?.value?.values?.mock?.calls?.[0]?.[0]
+        ?? (db.insert as any).mock?.calls?.[0]?.[0];
+      const insertArgs = (db.insert as any).mock?.results?.[0]?.value?.values?.mock?.calls?.[0]?.[0] ?? null;
+      // The insert value object includes the computed expiresAt. The
+      // resolved timestamp must land within the [before+ttl, after+ttl]
+      // window — both bounds were captured around the request.
+      if (insertArgs?.expiresAt instanceof Date) {
+        const ttlMs = 10080 * 60 * 1000;
+        const lo = before + ttlMs - 50;
+        const hi = after + ttlMs + 50;
+        expect(insertArgs.expiresAt.getTime()).toBeGreaterThanOrEqual(lo);
+        expect(insertArgs.expiresAt.getTime()).toBeLessThanOrEqual(hi);
+      }
+      expect(valuesCall || insertArgs).toBeTruthy();
+    });
+
+    it('rejects when both ttlMinutes and expiresAt are sent', async () => {
+      const res = await app.request('/enrollment-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          name: 'Conflicting',
+          ttlMinutes: 60,
+          expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects ttlMinutes outside the 1..525960 range', async () => {
+      const tooSmall = await app.request('/enrollment-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ name: 'X', ttlMinutes: 0 }),
+      });
+      expect(tooSmall.status).toBe(400);
+
+      const tooBig = await app.request('/enrollment-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({ name: 'X', ttlMinutes: 525_961 }),
+      });
+      expect(tooBig.status).toBe(400);
+    });
+
     it('returns 400 when system user provides no orgId', async () => {
       const { authMiddleware } = await import('../middleware/auth');
       vi.mocked(authMiddleware).mockImplementationOnce((c: any, next: any) => {

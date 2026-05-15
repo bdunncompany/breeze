@@ -459,13 +459,22 @@ const listEnrollmentKeysSchema = z.object({
   expired: z.enum(["true", "false"]).optional(),
 });
 
+// ttlMinutes caps at 525_960 (365 days). Caller supplies either ttlMinutes
+// or an explicit expiresAt; if both are absent the handler falls back to
+// DEFAULT_ENROLLMENT_KEY_TTL_MINUTES. Sending both is rejected so the
+// resolved expiry is unambiguous. "Never expires" is not exposed here
+// pending the partner-level cap (max ttl) that gates it.
 const createEnrollmentKeySchema = z.object({
   orgId: z.string().uuid().optional(),
   siteId: z.string().uuid().optional(),
   name: z.string().min(1).max(255),
   maxUsage: z.number().int().min(1).max(100000).optional(),
   expiresAt: z.string().datetime().optional(),
-});
+  ttlMinutes: z.number().int().min(1).max(525_960).optional(),
+}).refine(
+  (data) => !(data.expiresAt !== undefined && data.ttlMinutes !== undefined),
+  { message: 'Pass either ttlMinutes or expiresAt, not both', path: ['ttlMinutes'] }
+);
 
 const rotateEnrollmentKeySchema = z.object({
   maxUsage: z.number().int().min(1).max(100000).nullable().optional(),
@@ -644,9 +653,13 @@ enrollmentKeyRoutes.post(
 
     const rawKey = generateEnrollmentKey();
     const keyHash = hashEnrollmentKey(rawKey);
-    const expiresAt = data.expiresAt
-      ? new Date(data.expiresAt)
-      : new Date(Date.now() + DEFAULT_ENROLLMENT_KEY_TTL_MINUTES * 60 * 1000);
+    // ttlMinutes preferred wire format (timezone math stays server-side);
+    // explicit expiresAt remains accepted for callers that need it.
+    const expiresAt = data.ttlMinutes !== undefined
+      ? new Date(Date.now() + data.ttlMinutes * 60 * 1000)
+      : data.expiresAt
+        ? new Date(data.expiresAt)
+        : new Date(Date.now() + DEFAULT_ENROLLMENT_KEY_TTL_MINUTES * 60 * 1000);
     const maxUsage = data.maxUsage ?? 1;
 
     const [enrollmentKey] = await db

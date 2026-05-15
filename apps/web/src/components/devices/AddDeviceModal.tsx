@@ -39,6 +39,10 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
   );
   const [selectedSiteId, setSelectedSiteId] = useState('');
   const [deviceCount, setDeviceCount] = useState(1);
+  // Default 24h matches the existing CHILD_ENROLLMENT_KEY_TTL_MINUTES floor.
+  // The "Never expires" option is intentionally omitted until the
+  // partner-level cap (maxEnrollmentLinkTtlMinutes) lands in a sibling PR.
+  const [ttlMinutes, setTtlMinutes] = useState<number>(1440);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string>();
   const [downloadSuccess, setDownloadSuccess] = useState(false);
@@ -92,6 +96,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       setDownloadError(undefined);
       setDownloadSuccess(false);
       setDeviceCount(1);
+      setTtlMinutes(1440);
       setCliInitialized(false);
       setOnboardingToken('');
       setTokenError(undefined);
@@ -195,6 +200,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
           name: `Add device installer (${new Date().toISOString().slice(0, 10)})`,
           siteId: selectedSiteId,
           orgId: currentOrgId,
+          ttlMinutes,
         }),
       });
 
@@ -273,6 +279,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
           name: `Add device link (${new Date().toISOString().slice(0, 10)})`,
           siteId: selectedSiteId,
           orgId: currentOrgId,
+          ttlMinutes,
         }),
       });
 
@@ -440,6 +447,30 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     How many devices will use this installer.
+                  </p>
+                </div>
+
+                {/* Link expiry */}
+                <div>
+                  <label htmlFor="link-ttl" className="block text-sm font-medium mb-1.5">
+                    Link expires in
+                  </label>
+                  <select
+                    id="link-ttl"
+                    value={ttlMinutes}
+                    onChange={(e) => setTtlMinutes(Number(e.target.value))}
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    data-testid="link-ttl"
+                  >
+                    <option value={60}>1 hour</option>
+                    <option value={1440}>24 hours</option>
+                    <option value={10080}>7 days</option>
+                    <option value={43200}>30 days</option>
+                    <option value={129600}>90 days</option>
+                    <option value={525600}>1 year</option>
+                  </select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    After this window, the installer link stops accepting new enrollments. The installed agent itself does not expire.
                   </p>
                 </div>
 
