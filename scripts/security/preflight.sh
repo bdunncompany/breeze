@@ -31,7 +31,10 @@ for arg in "$@"; do
     --fast) FAST_MODE="1" ;;
     --strict) STRICT_MODE="1" ;;
     --help|-h)
-      sed -n '2,/^# Exit code/{/^# Exit code/q;p}' "$0" | sed 's/^# \{0,1\}//'
+      # Split into separate -e expressions so BSD sed (macOS default) accepts the
+      # range-with-quit pattern — GNU sed accepts ;-separated commands inside {...}
+      # but BSD sed rejects them with "extra characters at the end of p command".
+      sed -n -e '2,/^# Exit code/{' -e '/^# Exit code/q' -e 'p' -e '}' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "Unknown argument: $arg (try --help)" >&2; exit 2 ;;
@@ -133,10 +136,10 @@ else
   step "build breeze-web image (security-scan tag)" bash -c '
     docker build -f docker/Dockerfile.web -t breeze-web:security-scan .
   '
-  TRIVY_IMG_CMD="trivy image --severity HIGH,CRITICAL --exit-code 1"
+  TRIVY_IMG_CMD=(trivy image --severity HIGH,CRITICAL --exit-code 1)
   if command -v trivy >/dev/null 2>&1; then
-    step "trivy image scan: breeze-api" $TRIVY_IMG_CMD breeze-api:security-scan
-    step "trivy image scan: breeze-web" $TRIVY_IMG_CMD breeze-web:security-scan
+    step "trivy image scan: breeze-api" "${TRIVY_IMG_CMD[@]}" breeze-api:security-scan
+    step "trivy image scan: breeze-web" "${TRIVY_IMG_CMD[@]}" breeze-web:security-scan
   else
     step "trivy image scan: breeze-api (via Docker)" \
       docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
