@@ -22,7 +22,11 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT_DIR"
+# Guard the cd: set -e is intentionally omitted so this script runs all gates
+# and reports, but that means a silently-failed cd would scan the wrong dir
+# and could exit 0 — the exact false-confidence failure mode this script
+# exists to prevent. SC2164.
+cd "$ROOT_DIR" || exit 1
 
 FAST_MODE="0"
 STRICT_MODE="0"
