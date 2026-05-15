@@ -259,7 +259,21 @@ export default function PatchesPage() {
       }
       const body = await response.json().catch(() => ({}));
       const dispatched = Array.isArray(body?.dispatchedCommandIds) ? body.dispatchedCommandIds.length : 0;
-      const queued = Array.isArray(body?.queuedCommandIds) ? body.queuedCommandIds.length : deviceIds.length;
+      // Treat the absent `queuedCommandIds` field as 0, not as
+      // deviceIds.length — the fallback was masking the "scan didn't
+      // actually queue" path as a benign success. The server only owns
+      // the truth of what got queued; the request count is irrelevant
+      // once the response is in.
+      const queued = Array.isArray(body?.queuedCommandIds) ? body.queuedCommandIds.length : 0;
+      const succeeded = body?.success !== false && (queued > 0 || dispatched > 0);
+      if (!succeeded) {
+        const reason = (typeof body?.error === 'string' && body.error)
+          || (typeof body?.message === 'string' && body.message)
+          || (queued === 0 && dispatched === 0
+            ? 'No scan commands were queued. Verify the target devices are online and licensed for patching.'
+            : 'Patch scan did not start.');
+        throw new Error(reason);
+      }
       setScanSuccess(
         `Patch scan queued for ${queued} devices${dispatched > 0 ? `, ${dispatched} dispatched immediately` : ''}.`
       );

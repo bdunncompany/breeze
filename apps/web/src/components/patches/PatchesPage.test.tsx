@@ -161,4 +161,68 @@ describe('PatchesPage', () => {
 
     expect(await screen.findByText('Patch scan queued for 3 devices, 1 dispatched immediately.')).toBeTruthy();
   });
+
+  it('surfaces a scan error when /patches/scan responds 200 with success:false', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/update-rings') return makeJsonResponse({ data: [] });
+      if (url === '/patches') return makeJsonResponse({ data: [] });
+      if (url === '/devices?limit=100&page=1') {
+        return makeJsonResponse({
+          data: [{ id: 'device-1', hostname: 'PC-1' }],
+          pagination: { page: 1, limit: 100, total: 1 },
+        });
+      }
+      if (url === '/patches/scan') {
+        return makeJsonResponse({
+          success: false,
+          error: 'No devices are licensed for patching.',
+          queuedCommandIds: [],
+          dispatchedCommandIds: [],
+        });
+      }
+      return makeJsonResponse({}, false, 404);
+    });
+
+    render(<PatchesPage />);
+
+    await screen.findByText('No patches found. Try adjusting your search or filters.');
+    fireEvent.click(screen.getByRole('button', { name: 'Run Scan' }));
+
+    expect(
+      await screen.findByText('No devices are licensed for patching.')
+    ).toBeTruthy();
+    expect(screen.queryByText(/Patch scan queued for 0 devices/)).toBeNull();
+  });
+
+  it('surfaces a scan error when 200 response queued zero devices with no explicit error string', async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/update-rings') return makeJsonResponse({ data: [] });
+      if (url === '/patches') return makeJsonResponse({ data: [] });
+      if (url === '/devices?limit=100&page=1') {
+        return makeJsonResponse({
+          data: [{ id: 'device-1', hostname: 'PC-1' }],
+          pagination: { page: 1, limit: 100, total: 1 },
+        });
+      }
+      if (url === '/patches/scan') {
+        return makeJsonResponse({
+          queuedCommandIds: [],
+          dispatchedCommandIds: [],
+        });
+      }
+      return makeJsonResponse({}, false, 404);
+    });
+
+    render(<PatchesPage />);
+
+    await screen.findByText('No patches found. Try adjusting your search or filters.');
+    fireEvent.click(screen.getByRole('button', { name: 'Run Scan' }));
+
+    expect(
+      await screen.findByText(/No scan commands were queued/)
+    ).toBeTruthy();
+    expect(screen.queryByText(/Patch scan queued for 0 devices/)).toBeNull();
+  });
 });
