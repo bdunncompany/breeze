@@ -3,15 +3,10 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 
-// Only `name` is required by the API and the database (timezone defaults to
-// 'UTC' server-side). The form previously over-validated by marking 10 fields
-// as required, blocking legitimate cases like cloud-only sites, remote
-// employee home offices, and day-one onboarding where the operator wants to
-// fill in address/contact later. Discussion #628.
-//
-// Contact email is allowed to be empty; if the user enters something, it must
-// be a valid email format. Contact phone has no length floor — phones are
-// stored as-is and not format-validated elsewhere in the codebase.
+// Only `name` is required server-side (timezone defaults to 'UTC' in the API).
+// The empty-string branch on contactEmail is load-bearing: react-hook-form
+// sends `''` for unfilled inputs, so `z.string().email().optional()` alone
+// would block submit on a name-only form.
 const siteSchema = z.object({
   name: z.string().min(1, 'Site name is required'),
   timezone: z.string().optional(),

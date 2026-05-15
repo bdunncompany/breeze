@@ -721,12 +721,6 @@ describe('org routes', () => {
       expect(res.status).toBe(403);
     });
 
-    // Discussion #628 — over-validation relaxations.
-    // The schema previously required ten fields on the form side and accepted
-    // anything for `contact` on the API side. Below: name-only POST succeeds
-    // (zod's `timezone.default('UTC')` fills in the omission), invalid IANA
-    // strings are rejected, and an invalid contact email is rejected while a
-    // phone-only contact is accepted.
     it('accepts a name-only POST (no address, no contact, no timezone)', async () => {
       setAuthContext({ scope: 'organization', orgId: '11111111-1111-1111-1111-111111111111' });
       vi.mocked(db.insert).mockReturnValue({
@@ -957,6 +951,16 @@ describe('org routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.name).toBe('Updated');
+    });
+
+    it('rejects an invalid IANA timezone on update', async () => {
+      const res = await app.request('/orgs/sites/site-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: 'Mars/Olympus_Mons' })
+      });
+
+      expect(res.status).toBe(400);
     });
   });
 
