@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, gte, like, sql, desc, inArray } from 'drizzle-orm';
+import { and, eq, gte, like, sql, desc } from 'drizzle-orm';
 import { db, withSystemDbAccessContext } from '../../db';
 import { createHash, randomBytes } from 'crypto';
 import {
@@ -289,40 +289,36 @@ coreRoutes.get(
     }>();
 
     if (deviceIds.length > 0) {
-      const latestMetricTimestamps = db
-        .select({
-          deviceId: deviceMetrics.deviceId,
-          latestTimestamp: sql<Date>`max(${deviceMetrics.timestamp})`.as('latest_timestamp')
-        })
-        .from(deviceMetrics)
-        .where(inArray(deviceMetrics.deviceId, deviceIds))
-        .groupBy(deviceMetrics.deviceId)
-        .as('latest_metric_timestamps');
+      // Per-device latest-row lookup via LATERAL + LIMIT 1 against the
+      // (device_id, timestamp) primary key. Index-scan-backward returns
+      // one row per device in O(log n) per device. Replaces a
+      // GROUP BY MAX + self-join shape that scanned every metric row
+      // per device to compute the max timestamp — quadratic in metric
+      // history depth, observed at >1s on a 70-device fleet with
+      // ~8.8k rows/device.
+      const rows = await db.execute<{
+        device_id: string;
+        cpu_percent: number;
+        ram_percent: number;
+        timestamp: Date;
+      }>(sql`
+        SELECT d.device_id, m.cpu_percent, m.ram_percent, m.timestamp
+        FROM unnest(${deviceIds}::uuid[]) AS d(device_id)
+        INNER JOIN LATERAL (
+          SELECT cpu_percent, ram_percent, timestamp
+          FROM ${deviceMetrics}
+          WHERE device_id = d.device_id
+          ORDER BY timestamp DESC
+          LIMIT 1
+        ) AS m ON true
+      `);
 
-      const latestMetrics = await db
-        .select({
-          deviceId: deviceMetrics.deviceId,
-          cpuPercent: deviceMetrics.cpuPercent,
-          ramPercent: deviceMetrics.ramPercent,
-          timestamp: deviceMetrics.timestamp
-        })
-        .from(deviceMetrics)
-        .innerJoin(
-          latestMetricTimestamps,
-          and(
-            eq(deviceMetrics.deviceId, latestMetricTimestamps.deviceId),
-            eq(deviceMetrics.timestamp, latestMetricTimestamps.latestTimestamp)
-          )
-        );
-
-      for (const metric of latestMetrics) {
-        if (!latestMetricsByDevice.has(metric.deviceId)) {
-          latestMetricsByDevice.set(metric.deviceId, {
-            cpuPercent: metric.cpuPercent,
-            ramPercent: metric.ramPercent,
-            timestamp: metric.timestamp
-          });
-        }
+      for (const row of rows) {
+        latestMetricsByDevice.set(row.device_id, {
+          cpuPercent: row.cpu_percent,
+          ramPercent: row.ram_percent,
+          timestamp: row.timestamp,
+        });
       }
     }
 
