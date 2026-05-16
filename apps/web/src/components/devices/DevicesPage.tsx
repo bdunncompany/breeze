@@ -123,12 +123,17 @@ export default function DevicesPage() {
       setLoading(true);
       setError(null);
 
-      // Fetch devices, orgs, sites, and groups in parallel
+      // /devices opts out of fetchWithAuth's auto-injected orgId so the
+      // server returns every device in the caller's accessible scope,
+      // not just the current-org subset. The Current/All-orgs toggle
+      // then narrows client-side via DeviceList's lockedOrgFilter.
+      // Without the opt-out, "All orgs" looks identical to "Current org"
+      // because the server already pre-filtered.
       const [devicesResponse, orgsResponse, sitesResponse, groupsResponse] = await Promise.all([
         // limit=500 matches the API-side cap for /devices; the list is
         // paginated client-side after this fetch. Larger fleets need
         // server-side sort/filter/page — tracked separately.
-        fetchWithAuth('/devices?includeDecommissioned=true&limit=500'),
+        fetchWithAuth('/devices?includeDecommissioned=true&limit=500', {}, { skipOrgIdInjection: true }),
         fetchWithAuth('/orgs'),
         fetchWithAuth('/orgs/sites'),
         fetchWithAuth('/device-groups?includeMemberships=true').catch((err) => {
