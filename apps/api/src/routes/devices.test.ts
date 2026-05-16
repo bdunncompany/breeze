@@ -25,16 +25,24 @@ vi.mock('../services/permissions', () => ({
   })
 }));
 
-vi.mock('drizzle-orm', () => ({
-  eq: vi.fn((...args: unknown[]) => ({ eq: args })),
-  and: vi.fn((...args: unknown[]) => ({ and: args })),
-  gte: vi.fn((...args: unknown[]) => ({ gte: args })),
-  like: vi.fn((...args: unknown[]) => ({ like: args })),
-  sql: vi.fn(() => ({ as: vi.fn(() => 'latestTimestamp') })),
-  desc: vi.fn((col: unknown) => ({ desc: col })),
-  inArray: vi.fn((...args: unknown[]) => ({ inArray: args })),
-  count: vi.fn()
-}));
+vi.mock('drizzle-orm', () => {
+  // drizzle-orm's `sql` is a callable tag with attached statics (sql.join,
+  // sql.raw, etc.). The /devices LATERAL query uses sql.join() to build a
+  // VALUES tuple list, so the mock has to expose that as a function.
+  const sqlTag: any = vi.fn(() => ({ as: vi.fn(() => 'latestTimestamp') }));
+  sqlTag.join = vi.fn((parts: unknown[]) => ({ join: parts }));
+  sqlTag.raw = vi.fn((s: unknown) => ({ raw: s }));
+  return {
+    eq: vi.fn((...args: unknown[]) => ({ eq: args })),
+    and: vi.fn((...args: unknown[]) => ({ and: args })),
+    gte: vi.fn((...args: unknown[]) => ({ gte: args })),
+    like: vi.fn((...args: unknown[]) => ({ like: args })),
+    sql: sqlTag,
+    desc: vi.fn((col: unknown) => ({ desc: col })),
+    inArray: vi.fn((...args: unknown[]) => ({ inArray: args })),
+    count: vi.fn()
+  };
+});
 
 vi.mock('../db', () => ({
   runOutsideDbContext: vi.fn((fn) => fn()),
@@ -62,7 +70,11 @@ vi.mock('../db', () => ({
     })),
     delete: vi.fn(() => ({
       where: vi.fn(() => Promise.resolve())
-    }))
+    })),
+    // db.execute() is used for the latest-metrics LATERAL query in
+    // /devices and for any raw sql template. Returns an empty array
+    // by default; tests override via vi.mocked(db.execute).mockResolvedValueOnce.
+    execute: vi.fn(() => Promise.resolve([]))
   }
 }));
 
@@ -159,6 +171,7 @@ describe('device routes', () => {
     vi.mocked(db.delete).mockImplementation(() => ({
       where: vi.fn(() => Promise.resolve())
     }) as any);
+    vi.mocked(db.execute).mockImplementation(() => Promise.resolve([]) as any);
     app = new Hono();
     app.route('/devices', deviceRoutes);
   });
@@ -334,23 +347,17 @@ describe('device routes', () => {
               })
             })
           })
-        } as any)
-        // 3rd: subquery for latest metric timestamps (not awaited, builds subquery ref)
-        .mockReturnValueOnce({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              groupBy: vi.fn().mockReturnValue({
-                as: vi.fn().mockReturnValue({ deviceId: 'deviceId', latestTimestamp: 'latestTimestamp' })
-              })
-            })
-          })
-        } as any)
-        // 4th: metrics query with innerJoin (awaited)
-        .mockReturnValueOnce({
-          from: vi.fn().mockReturnValue({
-            innerJoin: vi.fn().mockResolvedValue([])
-          })
         } as any);
+
+      // Latest-metrics LATERAL query goes through db.execute() with a
+      // raw sql template — return one row per device so the response
+      // mapping (cpuPercent / ramPercent / metrics.timestamp) exercises
+      // the per-device latest lookup path.
+      const metricsTimestamp = new Date('2026-05-16T17:00:00Z');
+      vi.mocked(db.execute).mockResolvedValueOnce([
+        { device_id: 'device-1', cpu_percent: 12.5, ram_percent: 33, timestamp: metricsTimestamp },
+        { device_id: 'device-2', cpu_percent: 4.2, ram_percent: 18, timestamp: metricsTimestamp },
+      ] as any);
 
       const res = await app.request('/devices?status=online&osType=linux&search=host&page=1&limit=2', {
         method: 'GET',
@@ -362,6 +369,25 @@ describe('device routes', () => {
       expect(body.data).toHaveLength(2);
       expect(body.pagination.total).toBe(2);
       expect(body.data[0].hardware).toBeDefined();
+      // LATERAL metrics row → response: snake_case columns map to
+      // camelCase metrics.cpuPercent / ramPercent. Each device matches
+      // by uuid, so device-1's metrics row sticks to device-1.
+      expect(body.data[0].cpuPercent).toBe(12.5);
+      expect(body.data[0].ramPercent).toBe(33);
+      expect(body.data[1].cpuPercent).toBe(4.2);
+      expect(body.data[1].ramPercent).toBe(18);
+      expect(body.data[0].metrics).toEqual({
+        cpuPercent: 12.5,
+        ramPercent: 33,
+        timestamp: metricsTimestamp.toISOString(),
+      });
+
+      // Regression guard: the LATERAL replaces what used to be two
+      // db.select() chains (a GROUP BY MAX subquery + an innerJoin on
+      // the max timestamp). If a future refactor reverts to those, the
+      // db.select call count here will jump from 2 to 4.
+      expect(vi.mocked(db.select).mock.calls.length).toBe(2);
+      expect(vi.mocked(db.execute).mock.calls.length).toBe(1);
     });
   });
 
