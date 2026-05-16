@@ -130,7 +130,7 @@ export default function DevicesPage() {
       // Without the opt-out, "All orgs" looks identical to "Current org"
       // because the server already pre-filtered.
       const [devicesResponse, orgsResponse, sitesResponse, groupsResponse] = await Promise.all([
-        fetchWithAuth('/devices?includeDecommissioned=true', {}, { skipOrgIdInjection: true }),
+        fetchWithAuth('/devices?includeDecommissioned=true&limit=100', {}, { skipOrgIdInjection: true }),
         fetchWithAuth('/orgs'),
         fetchWithAuth('/orgs/sites'),
         fetchWithAuth('/device-groups?includeMemberships=true').catch((err) => {
