@@ -8,6 +8,7 @@
 # Usage:
 #   bash scripts/security/preflight.sh           # all checks
 #   bash scripts/security/preflight.sh --fast    # skip Trivy image scan (saves ~5-10 min)
+#   bash scripts/security/preflight.sh --strict  # treat skipped checks as failures
 #   bash scripts/security/preflight.sh --help    # this message
 #
 # First-time setup (each developer installs these once):
@@ -16,8 +17,8 @@
 #   - cargo install cargo-audit --locked
 #   - docker (or OrbStack/Colima) for the Trivy scans, OR `brew install trivy`
 #
-# Exit code: 0 if every required check passes, non-zero otherwise. Skipped
-# checks (missing tooling) print a hint and exit non-zero with --strict.
+# Exit code: 0 if every required check passes, non-zero on any FAIL. Skipped
+# checks (missing tooling) are non-fatal unless --strict is passed.
 
 set -uo pipefail
 
@@ -118,9 +119,14 @@ if command -v trivy >/dev/null 2>&1; then
     trivy fs --severity HIGH,CRITICAL --exit-code 1 .
   TRIVY_FS_RAN="1"
 elif command -v docker >/dev/null 2>&1; then
+  # --ignorefile: container CWD is /, not /scan, so Trivy's default
+  # .trivyignore auto-load doesn't fire. Pointing at the in-container
+  # path keeps the Docker fallback in sync with native + CI behavior
+  # (CVE-2024-29415 / node-ip is suppressed identically).
   step "trivy fs scan via Docker (HIGH,CRITICAL, blocking)" \
     docker run --rm -v "$ROOT_DIR":/scan:ro aquasec/trivy:latest \
-      fs --severity HIGH,CRITICAL --exit-code 1 /scan
+      fs --severity HIGH,CRITICAL --exit-code 1 \
+      --ignorefile /scan/.trivyignore /scan
   TRIVY_FS_RAN="1"
 else
   skip "trivy fs scan" "install: brew install trivy  OR start Docker/OrbStack"
@@ -145,12 +151,23 @@ else
     step "trivy image scan: breeze-api" "${TRIVY_IMG_CMD[@]}" breeze-api:security-scan
     step "trivy image scan: breeze-web" "${TRIVY_IMG_CMD[@]}" breeze-web:security-scan
   else
+    # Mount .trivyignore + --ignorefile: same rationale as the fs Docker
+    # fallback above — container CWD is /, so the default auto-load
+    # doesn't fire. We mount only the ignore file (the image scan
+    # doesn't need the rest of the repo) and point Trivy at it
+    # explicitly so CI's suppressions apply locally too.
     step "trivy image scan: breeze-api (via Docker)" \
-      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 breeze-api:security-scan
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$ROOT_DIR/.trivyignore":/scan/.trivyignore:ro \
+        aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 \
+        --ignorefile /scan/.trivyignore breeze-api:security-scan
     step "trivy image scan: breeze-web (via Docker)" \
-      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 breeze-web:security-scan
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -v "$ROOT_DIR/.trivyignore":/scan/.trivyignore:ro \
+        aquasec/trivy:latest image --severity HIGH,CRITICAL --exit-code 1 \
+        --ignorefile /scan/.trivyignore breeze-web:security-scan
   fi
 fi
 
@@ -171,5 +188,10 @@ if [ "$STRICT_MODE" = "1" ] && [ "${#SKIP_LIST[@]}" -gt 0 ]; then
   exit 1
 fi
 
-printf '\n%sAll required checks passed.%s\n' "$C_OK" "$C_RESET"
+if [ "${#SKIP_LIST[@]}" -gt 0 ]; then
+  printf '\n%sAll required checks passed (%d skipped — install tooling or use --strict for full fidelity).%s\n' \
+    "$C_OK" "${#SKIP_LIST[@]}" "$C_RESET"
+else
+  printf '\n%sAll required checks passed.%s\n' "$C_OK" "$C_RESET"
+fi
 exit 0
