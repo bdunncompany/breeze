@@ -491,6 +491,40 @@ describe('enrollment key routes — installer download', () => {
       );
     });
 
+    it('child key honors the ttlMinutes query param (per-link picker)', async () => {
+      const parentKey = makeEnrollmentKey(); // parent: 1h remaining
+      mockSelectFromWhereLimit([parentKey]);
+      mockInsertValuesReturning([
+        makeEnrollmentKey({ id: 'child-key-id', name: 'Test Key (installer)', maxUsage: 1 }),
+      ]);
+
+      const ttlMinutes = 43200; // 30 days
+      const before = Date.now();
+      const res = await app.request(
+        `/enrollment-keys/${KEY_ID}/installer/windows?ttlMinutes=${ttlMinutes}`,
+        { method: 'GET', headers: { Authorization: 'Bearer token' } },
+      );
+      const after = Date.now();
+
+      expect(res.status).toBe(200);
+      const valuesFn = vi.mocked(db.insert).mock.results[0]!.value.values;
+      const insertedRow = valuesFn.mock.calls[0]![0] as { expiresAt: Date };
+      const childExpiryMs = insertedRow.expiresAt.getTime();
+      const ttlMs = ttlMinutes * 60 * 1000;
+      // Fresh window from mint time = the admin's choice, not the 24h
+      // CHILD_ENROLLMENT_KEY_TTL_MINUTES default, not the parent's 1h.
+      expect(childExpiryMs).toBeGreaterThanOrEqual(before + ttlMs - 50);
+      expect(childExpiryMs).toBeLessThanOrEqual(after + ttlMs + 50);
+    });
+
+    it('returns 400 for ttlMinutes above the 525_600 cap', async () => {
+      const res = await app.request(
+        `/enrollment-keys/${KEY_ID}/installer/windows?ttlMinutes=525601`,
+        { method: 'GET', headers: { Authorization: 'Bearer token' } },
+      );
+      expect(res.status).toBe(400);
+    });
+
     // Query-param validation is enforced by the Hono zValidator middleware
     // before any route-body code runs, so these tests do NOT need to stage
     // db.select mocks. Staging them caused `mockReturnValueOnce` queues to

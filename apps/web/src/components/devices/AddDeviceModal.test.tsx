@@ -176,6 +176,38 @@ describe('AddDeviceModal', () => {
     expect(String(createCall[0])).toBe('/enrollment-keys');
     const createBody = JSON.parse((createCall[1] as RequestInit).body as string);
     expect(createBody.siteId).toBe('site-aaa-111');
+    // ttlMinutes drives the *child* key now, not the transient parent —
+    // the parent POST must NOT carry it (PR #739 review finding #1).
+    expect(createBody.ttlMinutes).toBeUndefined();
+
+    // Default 24h (1440) flows to the installer (child) download URL.
+    const dlCall = fetchWithAuthMock.mock.calls[1];
+    expect(String(dlCall[0])).toContain('ttlMinutes=1440');
+  });
+
+  it('sends the selected expiry to the installer download URL', async () => {
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/enrollment-keys') {
+        return makeJsonResponse({ id: 'key-123', key: 'raw-key-abc' }, true, 201);
+      }
+      if (url.startsWith('/enrollment-keys/key-123/installer/')) {
+        return makeJsonResponse(null, true);
+      }
+      return makeJsonResponse({}, false, 404);
+    });
+
+    render(<AddDeviceModal isOpen onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByTestId('link-ttl'), { target: { value: '10080' } });
+    fireEvent.click(getDownloadButton());
+
+    await waitFor(() => {
+      expect(fetchWithAuthMock).toHaveBeenCalledTimes(2);
+    });
+
+    const dlCall = fetchWithAuthMock.mock.calls[1];
+    expect(String(dlCall[0])).toContain('ttlMinutes=10080');
   });
 
   it('generates a public link on button click', async () => {
@@ -198,6 +230,7 @@ describe('AddDeviceModal', () => {
 
     render(<AddDeviceModal isOpen onClose={vi.fn()} />);
 
+    fireEvent.change(screen.getByTestId('link-ttl'), { target: { value: '43200' } });
     fireEvent.click(screen.getByText('Generate Link'));
 
     await waitFor(() => {
@@ -205,6 +238,15 @@ describe('AddDeviceModal', () => {
     });
 
     expect(screen.getByText(/Valid for 1 download/)).toBeDefined();
+
+    // ttlMinutes goes on the installer-link (child) body, not the parent POST.
+    const createCall = fetchWithAuthMock.mock.calls[0];
+    expect(JSON.parse((createCall[1] as RequestInit).body as string).ttlMinutes)
+      .toBeUndefined();
+    const linkCall = fetchWithAuthMock.mock.calls[1];
+    expect(String(linkCall[0])).toBe('/enrollment-keys/key-456/installer-link');
+    expect(JSON.parse((linkCall[1] as RequestInit).body as string).ttlMinutes)
+      .toBe(43200);
   });
 
   it('copies generated link to clipboard', async () => {
