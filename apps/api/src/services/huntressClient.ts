@@ -225,7 +225,7 @@ function normalizeAgent(input: unknown): HuntressAgentRecord | null {
     hostname: firstString(row, ['hostname', 'hostName', 'name', 'computerName']),
     platform: firstString(row, ['platform', 'os', 'operatingSystem', 'osType']),
     status: normalizeAgentStatus(firstString(row, ['status', 'state', 'agentStatus'])),
-    lastSeenAt: firstDate(row, ['lastSeenAt', 'last_seen_at', 'lastSeen', 'last_seen', 'updatedAt']),
+    lastSeenAt: firstDate(row, ['lastSeenAt', 'last_seen_at', 'lastSeen', 'last_seen', 'lastCallbackAt', 'last_callback_at', 'updatedAt', 'updated_at']),
     metadata: row
   };
 }
@@ -242,11 +242,11 @@ function normalizeIncident(input: unknown): HuntressIncidentRecord | null {
     huntressIncidentId,
     severity: normalizeSeverity(firstString(row, ['severity', 'priority', 'level'])),
     category: firstString(row, ['category', 'type', 'threatType', 'incidentType']),
-    title: firstString(row, ['title', 'name', 'summary']) ?? fallbackTitle,
-    description: firstString(row, ['description', 'details', 'message', 'summary']),
+    title: firstString(row, ['title', 'name', 'subject', 'summary']) ?? fallbackTitle,
+    description: firstString(row, ['description', 'details', 'message', 'body', 'summary']),
     recommendation: firstString(row, ['recommendation', 'recommendedAction', 'remediation', 'nextSteps']),
     status: normalizeStatus(firstString(row, ['status', 'state', 'resolutionStatus', 'incidentStatus'])),
-    reportedAt: firstDate(row, ['reportedAt', 'reported_at', 'createdAt', 'created_at', 'detectedAt', 'timestamp']),
+    reportedAt: firstDate(row, ['reportedAt', 'reported_at', 'createdAt', 'created_at', 'detectedAt', 'sentAt', 'sent_at', 'timestamp']),
     resolvedAt: firstDate(row, ['resolvedAt', 'resolved_at', 'closedAt', 'closed_at']),
     huntressAgentId: firstString(row, ['agentId', 'agent_id', 'hostAgentId', 'host_agent_id']),
     hostname: firstString(row, ['hostname', 'hostName', 'computerName', 'host']),
