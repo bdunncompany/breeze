@@ -15,6 +15,26 @@ function detectUserOS(): 'windows' | 'macos' | 'linux' {
   return 'linux';
 }
 
+/**
+ * Pull a human-readable message out of an API error body. Handles three
+ * shapes: a plain `{ error: string }` / `{ message: string }`, and the
+ * @hono/zod-validator 400 shape `{ error: { issues: [{ message }] } }`
+ * (where `error` is a serialized ZodError, not a string). Without the
+ * last case, validation failures collapse to a bare status code and the
+ * server's specific message (e.g. the ttlMinutes/expiresAt conflict) is
+ * lost — see PR #739 review.
+ */
+function extractApiError(body: unknown): string {
+  if (!body || typeof body !== 'object') return '';
+  const b = body as { message?: unknown; error?: unknown };
+  if (typeof b.message === 'string' && b.message) return b.message;
+  if (typeof b.error === 'string' && b.error) return b.error;
+  const zodIssue = (b.error as { issues?: Array<{ message?: unknown }> } | undefined)
+    ?.issues?.[0]?.message;
+  if (typeof zodIssue === 'string' && zodIssue) return zodIssue;
+  return '';
+}
+
 interface AddDeviceModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -39,9 +59,14 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
   );
   const [selectedSiteId, setSelectedSiteId] = useState('');
   const [deviceCount, setDeviceCount] = useState(1);
-  // Default 24h matches the existing CHILD_ENROLLMENT_KEY_TTL_MINUTES floor.
-  // The "Never expires" option is intentionally omitted until the
-  // partner-level cap (maxEnrollmentLinkTtlMinutes) lands in a sibling PR.
+  // Lifetime of the installer / shared link the admin distributes. Sent to
+  // the child-key mint routes (installer download + installer-link), where
+  // the server resolves it to a fresh absolute expiry measured from mint
+  // time — not the transient parent key. 24h is the product default (it
+  // happens to coincide with the server's CHILD_ENROLLMENT_KEY_TTL_MINUTES
+  // fallback, but is set explicitly here, not inherited). "Never expires"
+  // is intentionally omitted until the partner-level cap
+  // (maxEnrollmentLinkTtlMinutes) lands in a sibling PR.
   const [ttlMinutes, setTtlMinutes] = useState<number>(1440);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string>();
@@ -200,13 +225,12 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
           name: `Add device installer (${new Date().toISOString().slice(0, 10)})`,
           siteId: selectedSiteId,
           orgId: currentOrgId,
-          ttlMinutes,
         }),
       });
 
       if (!keyRes.ok) {
         const body = await keyRes.json().catch(() => ({ error: 'Failed to create enrollment key' }));
-        const rawMessage = body.message || body.error || '';
+        const rawMessage = extractApiError(body);
         if (keyRes.status === 403 && rawMessage.toLowerCase().includes('mfa required')) {
           setDownloadError('MFA_REQUIRED');
         } else {
@@ -224,7 +248,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       let dlRes: Response;
       try {
         dlRes = await fetchWithAuth(
-          `/enrollment-keys/${parentKeyId}/installer/${selectedPlatform}?count=${deviceCount}`,
+          `/enrollment-keys/${parentKeyId}/installer/${selectedPlatform}?count=${deviceCount}&ttlMinutes=${ttlMinutes}`,
           { signal: dlController.signal },
         );
       } finally {
@@ -233,7 +257,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
 
       if (!dlRes.ok) {
         const body = await dlRes.json().catch(() => ({ error: 'Download failed' }));
-        setDownloadError(body.error || `Download failed (${dlRes.status})`);
+        setDownloadError(extractApiError(body) || `Download failed (${dlRes.status})`);
         return;
       }
 
@@ -279,13 +303,12 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
           name: `Add device link (${new Date().toISOString().slice(0, 10)})`,
           siteId: selectedSiteId,
           orgId: currentOrgId,
-          ttlMinutes,
         }),
       });
 
       if (!keyRes.ok) {
         const body = await keyRes.json().catch(() => ({ error: 'Failed to create enrollment key' }));
-        const rawMessage = body.message || body.error || '';
+        const rawMessage = extractApiError(body);
         if (keyRes.status === 403 && rawMessage.toLowerCase().includes('mfa required')) {
           setLinkError('MFA_REQUIRED');
         } else {
@@ -300,12 +323,12 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
       const linkRes = await fetchWithAuth(`/enrollment-keys/${keyData.id}/installer-link`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: selectedPlatform, count: deviceCount }),
+        body: JSON.stringify({ platform: selectedPlatform, count: deviceCount, ttlMinutes }),
       });
 
       if (!linkRes.ok) {
         const body = await linkRes.json().catch(() => ({ error: 'Failed to generate link' }));
-        setLinkError(body.error || `Failed to generate link (${linkRes.status})`);
+        setLinkError(extractApiError(body) || `Failed to generate link (${linkRes.status})`);
         return;
       }
 
@@ -458,7 +481,10 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                   <select
                     id="link-ttl"
                     value={ttlMinutes}
-                    onChange={(e) => setTtlMinutes(Number(e.target.value))}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isFinite(n)) setTtlMinutes(n);
+                    }}
                     className="h-10 w-full rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     data-testid="link-ttl"
                   >
@@ -470,7 +496,7 @@ export default function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps)
                     <option value={525600}>1 year</option>
                   </select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    After this window, the installer link stops accepting new enrollments. The installed agent itself does not expire.
+                    After this window, the downloaded installer and shared link stop accepting new enrollments. Devices already enrolled stay connected.
                   </p>
                 </div>
 

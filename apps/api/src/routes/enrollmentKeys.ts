@@ -95,9 +95,17 @@ function generateEnrollmentKey(): string {
   return randomBytes(32).toString("hex"); // 64-char hex string
 }
 
-/** Fresh absolute expiry for a child enrollment key, independent of parent. */
-function freshChildExpiresAt(): Date {
-  return new Date(Date.now() + CHILD_ENROLLMENT_KEY_TTL_MINUTES * 60 * 1000);
+/**
+ * Fresh absolute expiry for a child enrollment key, measured from *now*
+ * (mint time), independent of the parent's remaining lifetime. This is the
+ * #410/#413/#414 anti-DOA property: a child minted from a near-expiry parent
+ * still gets a full window. `ttlMinutes`, when supplied, is the admin's
+ * per-link choice from the Add Device modal; absent it, the deployment
+ * default applies.
+ */
+function freshChildExpiresAt(ttlMinutes?: number): Date {
+  const minutes = ttlMinutes ?? CHILD_ENROLLMENT_KEY_TTL_MINUTES;
+  return new Date(Date.now() + minutes * 60 * 1000);
 }
 
 /**
@@ -459,18 +467,21 @@ const listEnrollmentKeysSchema = z.object({
   expired: z.enum(["true", "false"]).optional(),
 });
 
-// ttlMinutes caps at 525_960 (365 days). Caller supplies either ttlMinutes
-// or an explicit expiresAt; if both are absent the handler falls back to
+// ttlMinutes caps at 525_600 (365 days = 365 * 24 * 60), matching the UI's
+// "1 year" option exactly. Caller supplies either ttlMinutes or an explicit
+// expiresAt; if both are absent the handler falls back to
 // DEFAULT_ENROLLMENT_KEY_TTL_MINUTES. Sending both is rejected so the
 // resolved expiry is unambiguous. "Never expires" is not exposed here
 // pending the partner-level cap (max ttl) that gates it.
+const MAX_TTL_MINUTES = 525_600;
+
 const createEnrollmentKeySchema = z.object({
   orgId: z.string().uuid().optional(),
   siteId: z.string().uuid().optional(),
   name: z.string().min(1).max(255),
   maxUsage: z.number().int().min(1).max(100000).optional(),
   expiresAt: z.string().datetime().optional(),
-  ttlMinutes: z.number().int().min(1).max(525_960).optional(),
+  ttlMinutes: z.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
 }).refine(
   (data) => !(data.expiresAt !== undefined && data.ttlMinutes !== undefined),
   { message: 'Pass either ttlMinutes or expiresAt, not both', path: ['ttlMinutes'] }
@@ -481,13 +492,19 @@ const rotateEnrollmentKeySchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
+// ttlMinutes here sets the lifetime of the *child* key — the downloaded
+// installer / shared short-link the admin actually distributes. Measured
+// fresh from mint time (see freshChildExpiresAt). Absent → deployment
+// default. Same 365-day cap as createEnrollmentKeySchema.
 const installerQuerySchema = z.object({
   count: z.coerce.number().int().min(1).max(100000).optional(),
+  ttlMinutes: z.coerce.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
 });
 
 const installerLinkSchema = z.object({
   platform: z.enum(["windows", "macos"]),
   count: z.number().int().min(1).max(100000).optional(),
+  ttlMinutes: z.number().int().min(1).max(MAX_TTL_MINUTES).optional(),
 });
 
 function sanitizeEnrollmentKey(
@@ -873,7 +890,8 @@ enrollmentKeyRoutes.get(
     const auth = c.get("auth");
     const keyId = c.req.param("id")!;
     const platform = c.req.param("platform");
-    const { count: childMaxUsage = 1 } = c.req.valid("query");
+    const { count: childMaxUsage = 1, ttlMinutes: childTtlMinutes } =
+      c.req.valid("query");
 
     if (platform !== "windows" && platform !== "macos") {
       return c.json(
@@ -1079,7 +1097,7 @@ enrollmentKeyRoutes.get(
         key: childKeyHash,
         keySecretHash: parentKey.keySecretHash,
         maxUsage: childMaxUsage,
-        expiresAt: freshChildExpiresAt(),
+        expiresAt: freshChildExpiresAt(childTtlMinutes),
         createdBy: auth.user.id,
         shortCode,
         installerPlatform: platform,
@@ -1309,7 +1327,11 @@ enrollmentKeyRoutes.post(
   async (c) => {
     const auth = c.get("auth");
     const keyId = c.req.param("id")!;
-    const { platform, count: childMaxUsage = 1 } = c.req.valid("json");
+    const {
+      platform,
+      count: childMaxUsage = 1,
+      ttlMinutes: childTtlMinutes,
+    } = c.req.valid("json");
 
     // Look up parent enrollment key
     const [parentKey] = await db
@@ -1404,7 +1426,7 @@ enrollmentKeyRoutes.post(
         key: childKeyHash,
         keySecretHash: parentKey.keySecretHash,
         maxUsage: childMaxUsage,
-        expiresAt: freshChildExpiresAt(),
+        expiresAt: freshChildExpiresAt(childTtlMinutes),
         createdBy: auth.user.id,
         shortCode,
         installerPlatform: platform,

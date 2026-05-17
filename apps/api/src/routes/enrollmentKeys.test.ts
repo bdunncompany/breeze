@@ -314,6 +314,54 @@ describe("POST /enrollment-keys/:id/installer-link", () => {
     expect(childExpiryMs).not.toBe(parentRow.expiresAt.getTime());
   });
 
+  it("child key honors the ttlMinutes from the request body (per-link picker)", async () => {
+    // Admin picked "7 days" in the Add Device modal. The child key (the
+    // thing the short link redeems) must get a fresh 7d window measured
+    // from mint time — not the deployment default, not the parent's life.
+    const parentRow = makeKeyRow({
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000), // parent: 1h
+    });
+    const childRow = makeChildKeyRow();
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([parentRow]),
+          }),
+        }),
+      } as any)
+      .mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      } as any);
+
+    const insertValues = vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValue([childRow]),
+    });
+    vi.mocked(db.insert).mockReturnValue({ values: insertValues } as any);
+
+    const ttlMinutes = 10080; // 7 days
+    const before = Date.now();
+    const res = await app.request(`/enrollment-keys/${KEY_ID}/installer-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "windows", ttlMinutes }),
+    });
+    const after = Date.now();
+    expect(res.status).toBe(200);
+
+    expect(insertValues).toHaveBeenCalledTimes(1);
+    const insertedRow = insertValues.mock.calls[0]![0] as { expiresAt: Date };
+    const childExpiryMs = insertedRow.expiresAt.getTime();
+    const ttlMs = ttlMinutes * 60 * 1000;
+    expect(childExpiryMs).toBeGreaterThanOrEqual(before + ttlMs - 50);
+    expect(childExpiryMs).toBeLessThanOrEqual(after + ttlMs + 50);
+  });
+
   it("shortUrl and url share the same origin", async () => {
     const parentRow = makeKeyRow();
     const childRow = makeChildKeyRow();
