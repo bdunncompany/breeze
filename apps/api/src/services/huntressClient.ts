@@ -375,11 +375,13 @@ export class HuntressClient {
     for (const [key, value] of Object.entries(query ?? {})) {
       url.searchParams.set(key, value);
     }
-    // Send both Bearer token and X-API-Key header for compatibility with different Huntress API auth modes
+    // Huntress API only accepts HTTP Basic auth (verified 2026-05-17: Bearer and X-API-Key
+    // both return 401). The integration's apiKey field stores the literal
+    // "<key>:<secret>" pair from the Huntress partner portal. Base64-encode it for
+    // the Basic auth header.
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      Authorization: `Bearer ${this.apiKey}`,
-      'X-API-Key': this.apiKey,
+      Authorization: `Basic ${Buffer.from(this.apiKey).toString('base64')}`,
     };
     if (this.accountId) {
       headers['X-Account-Id'] = this.accountId;
