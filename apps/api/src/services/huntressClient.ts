@@ -39,6 +39,9 @@ function firstString(record: JsonRecord, keys: string[]): string | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
+    // Huntress returns numeric IDs (id, agent_id, account_id, organization_id).
+    // Stringify them so callers extracting IDs don't reject the record.
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   }
   return null;
 }
