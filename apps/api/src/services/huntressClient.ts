@@ -451,7 +451,7 @@ export class HuntressClient {
   }
 
   async listIncidents(since?: Date): Promise<HuntressIncidentRecord[]> {
-    const rows = await this.requestPaginated('/incidents', since, ['incidents', 'alerts', 'findings', 'data', 'items', 'results']);
+    const rows = await this.requestPaginated('/incident_reports', since, ['incident_reports', 'incidents', 'alerts', 'findings', 'data', 'items', 'results']);
     const incidents = rows
       .map((row) => normalizeIncident(row))
       .filter((row): row is HuntressIncidentRecord => row !== null);
