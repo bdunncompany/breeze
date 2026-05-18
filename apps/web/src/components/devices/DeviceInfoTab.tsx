@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Monitor, Cpu, Shield, Tag, Info, ListChecks, Pencil, Check, X, AlertTriangle } from 'lucide-react';
 import type { DesktopAccessState, TCCPermissions } from '@breeze/shared';
 import MacOSPermissionsCard from './MacOSPermissionsCard';
+import DeviceNetworkingCard from './DeviceNetworkingCard';
 import { fetchWithAuth } from '../../stores/auth';
 import { formatUptime } from '../../lib/utils';
 import {
@@ -502,6 +503,8 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
         <InfoRow label="GPU" value={hw?.gpuModel ?? '—'} />
         <InfoRow label="BIOS Version" value={hw?.biosVersion ?? '—'} />
       </Section>
+
+      <DeviceNetworkingCard deviceId={deviceId} />
 
       <Section title="Agent" icon={<Shield className="h-4 w-4 text-muted-foreground" />}>
         <InfoRow label="Agent Version" value={info?.agentVersion ?? '—'} />
