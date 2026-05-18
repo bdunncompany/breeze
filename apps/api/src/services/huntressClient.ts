@@ -225,7 +225,7 @@ function normalizeAgent(input: unknown): HuntressAgentRecord | null {
     hostname: firstString(row, ['hostname', 'hostName', 'name', 'computerName']),
     platform: firstString(row, ['platform', 'os', 'operatingSystem', 'osType']),
     status: normalizeAgentStatus(firstString(row, ['status', 'state', 'agentStatus'])),
-    lastSeenAt: firstDate(row, ['lastSeenAt', 'last_seen_at', 'lastSeen', 'last_seen', 'lastCallbackAt', 'last_callback_at', 'updatedAt', 'updated_at']),
+    lastSeenAt: firstDate(row, ['lastSeenAt', 'last_seen_at', 'lastSeen', 'last_seen', 'lastCallbackAt', 'last_callback_at', 'lastSurveyAt', 'last_survey_at']),
     metadata: row
   };
 }
