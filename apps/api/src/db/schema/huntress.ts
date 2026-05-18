@@ -19,6 +19,10 @@ export const huntressIntegrations = pgTable('huntress_integrations', {
   name: varchar('name', { length: 200 }).notNull(),
   apiKeyEncrypted: text('api_key_encrypted').notNull(),
   accountId: varchar('account_id', { length: 120 }),
+  // Scopes this integration to one Huntress organization (huntress.organizations[].id).
+  // When set, list calls add ?organization_id=<id>; when null, list calls return the
+  // entire Huntress account fleet (preserves legacy behavior for partner-wide rows).
+  huntressOrganizationId: varchar('huntress_organization_id', { length: 64 }),
   apiBaseUrl: varchar('api_base_url', { length: 300 }).notNull().default('https://api.huntress.io/v1'),
   webhookSecretEncrypted: text('webhook_secret_encrypted'),
   isActive: boolean('is_active').notNull().default(true),

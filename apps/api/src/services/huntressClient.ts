@@ -358,14 +358,21 @@ async function fetchJson(
 export class HuntressClient {
   private readonly apiKey: string;
   private readonly accountId: string | null;
+  private readonly organizationId: string | null;
   private readonly baseUrl: URL;
 
-  constructor(input: { apiKey: string; accountId?: string | null; baseUrl?: string | null }) {
+  constructor(input: {
+    apiKey: string;
+    accountId?: string | null;
+    organizationId?: string | null;
+    baseUrl?: string | null;
+  }) {
     if (!input.apiKey.trim()) {
       throw new Error('Huntress API key must not be empty');
     }
     this.apiKey = input.apiKey;
     this.accountId = input.accountId?.trim() || null;
+    this.organizationId = input.organizationId?.trim() || null;
     const parsedUrl = new URL(input.baseUrl?.trim() || DEFAULT_HUNTRESS_BASE_URL);
     if (parsedUrl.protocol !== 'https:' || !parsedUrl.hostname.endsWith('.huntress.io')) {
       throw new Error(`Invalid Huntress API base URL: ${parsedUrl.origin}. Must be HTTPS *.huntress.io`);
@@ -402,6 +409,11 @@ export class HuntressClient {
       const query: Record<string, string> = {};
       if (since) {
         query.since = since.toISOString();
+      }
+      // Server-side filter by Huntress organization. NULL on the client => no
+      // filter => full-account fleet (partner-wide integrations).
+      if (this.organizationId) {
+        query.organization_id = this.organizationId;
       }
       if (nextCursor) {
         query.cursor = nextCursor;

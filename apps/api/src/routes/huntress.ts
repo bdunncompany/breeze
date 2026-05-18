@@ -75,6 +75,9 @@ const upsertIntegrationSchema = z.object({
   name: z.string().min(1).max(200),
   apiKey: z.string().min(1).max(5000).optional(),
   accountId: z.string().min(1).max(120).optional(),
+  // Huntress organization id (digits as a string). When set, sync filters via
+  // ?organization_id=<id>; when omitted/null, sync returns the full account fleet.
+  huntressOrganizationId: z.string().regex(/^\d+$/).max(64).nullable().optional(),
   apiBaseUrl: z.string().url().max(300).optional().refine(
     (url) => {
       if (!url) return true;
@@ -254,6 +257,7 @@ huntressRoutes.get(
         orgId: huntressIntegrations.orgId,
         name: huntressIntegrations.name,
         accountId: huntressIntegrations.accountId,
+        huntressOrganizationId: huntressIntegrations.huntressOrganizationId,
         apiBaseUrl: huntressIntegrations.apiBaseUrl,
         isActive: huntressIntegrations.isActive,
         lastSyncAt: huntressIntegrations.lastSyncAt,
@@ -321,6 +325,9 @@ huntressRoutes.post(
       name: body.name,
       apiKeyEncrypted,
       accountId: body.accountId ?? existing?.accountId ?? null,
+      huntressOrganizationId: body.huntressOrganizationId !== undefined
+        ? body.huntressOrganizationId
+        : (existing?.huntressOrganizationId ?? null),
       apiBaseUrl: body.apiBaseUrl ?? existing?.apiBaseUrl ?? 'https://api.huntress.io/v1',
       webhookSecretEncrypted,
       isActive: body.isActive ?? existing?.isActive ?? true,
@@ -337,6 +344,7 @@ huntressRoutes.post(
           orgId: huntressIntegrations.orgId,
           name: huntressIntegrations.name,
           accountId: huntressIntegrations.accountId,
+          huntressOrganizationId: huntressIntegrations.huntressOrganizationId,
           apiBaseUrl: huntressIntegrations.apiBaseUrl,
           isActive: huntressIntegrations.isActive,
           lastSyncAt: huntressIntegrations.lastSyncAt,
@@ -357,6 +365,7 @@ huntressRoutes.post(
           orgId: huntressIntegrations.orgId,
           name: huntressIntegrations.name,
           accountId: huntressIntegrations.accountId,
+          huntressOrganizationId: huntressIntegrations.huntressOrganizationId,
           apiBaseUrl: huntressIntegrations.apiBaseUrl,
           isActive: huntressIntegrations.isActive,
           lastSyncAt: huntressIntegrations.lastSyncAt,

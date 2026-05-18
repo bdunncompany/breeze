@@ -608,6 +608,7 @@ async function syncIntegrationById(
       const client = new HuntressClient({
         apiKey,
         accountId: integration.accountId,
+        organizationId: integration.huntressOrganizationId,
         baseUrl: integration.apiBaseUrl,
       });
 
