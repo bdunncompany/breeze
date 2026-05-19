@@ -1,20 +1,71 @@
 import { z } from 'zod';
-
-export const listDevicesSchema = z.object({
-  page: z.string().optional(),
-  limit: z.string().optional(),
-  orgId: z.string().uuid().optional(),
-  siteId: z.string().uuid().optional(),
-  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating']).optional(),
-  includeDecommissioned: z.enum(['true', 'false']).optional(),
-  osType: z.enum(['windows', 'macos', 'linux']).optional(),
-  search: z.string().optional()
-});
+import { DEVICES_SORT_KEYS } from './cursor';
 
 const DEVICE_ROLES = [
   'workstation', 'server', 'printer', 'router', 'switch',
   'firewall', 'access_point', 'phone', 'iot', 'camera', 'nas', 'unknown'
 ] as const;
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * CSV-of-UUIDs query param. Accepts `?orgIds=uuid1,uuid2,uuid3`.
+ * Returns `string[]` on success, `undefined` when the param is absent.
+ * Each UUID is shape-validated; a single malformed entry rejects the
+ * whole list (no silent dropping of garbage).
+ */
+const csvUuidList = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    if (raw === undefined || raw === '') return undefined;
+    const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return undefined;
+    for (const p of parts) {
+      if (!UUID_RE.test(p)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `invalid uuid: ${p}` });
+        return z.NEVER;
+      }
+    }
+    return parts;
+  });
+
+const boolStr = z.enum(['true', 'false']).optional();
+
+export const listDevicesSchema = z.object({
+  // Legacy offset pagination — still honored when no `cursor` is provided
+  // AND `page` is explicitly set, so existing callers keep working. Cursor
+  // pagination supersedes for new callers (see Discussion #742).
+  page: z.string().optional(),
+  limit: z.string().optional(),
+
+  // Cursor pagination (Discussion #742 PR 3).
+  cursor: z.string().optional(),
+  sort: z.enum(DEVICES_SORT_KEYS).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional(),
+  /** When true, the cursor-less first response includes a `total` count.
+   *  Subsequent cursor pages never recompute — the client carries the
+   *  count it received on page 1. Default off because the count(*) is the
+   *  most expensive part of the query at scale. */
+  includeTotal: boolStr,
+
+  // Single-value filters (compat).
+  orgId: z.string().uuid().optional(),
+  siteId: z.string().uuid().optional(),
+
+  // First-class multi-value filters (#742). Plural form of the singletons
+  // above; both may be supplied. The handler ANDs them with auth's
+  // org-scope so a cross-org filter is rejected by RLS at the row level.
+  orgIds: csvUuidList,
+  siteIds: csvUuidList,
+  groupIds: csvUuidList,
+
+  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating']).optional(),
+  includeDecommissioned: boolStr,
+  osType: z.enum(['windows', 'macos', 'linux']).optional(),
+  role: z.enum(DEVICE_ROLES).optional(),
+  search: z.string().optional()
+});
 
 export const updateDeviceSchema = z.object({
   displayName: z.string().min(1).max(255).optional(),

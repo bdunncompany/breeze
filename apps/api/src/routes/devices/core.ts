@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { and, eq, gte, like, sql, desc } from 'drizzle-orm';
+import { and, eq, gte, like, sql, desc, inArray, type SQL } from 'drizzle-orm';
 import { db, withSystemDbAccessContext } from '../../db';
 import { createHash, randomBytes } from 'crypto';
 import {
@@ -19,6 +19,18 @@ import { authMiddleware, requireMfa, requireScope, requirePermission } from '../
 import { PERMISSIONS } from '../../services/permissions';
 import { getPagination, getDeviceWithOrgCheck } from './helpers';
 import { listDevicesSchema, updateDeviceSchema } from './schemas';
+import {
+  DEVICES_LIST_DEFAULT_LIMIT,
+  DEVICES_LIST_HARD_MAX,
+  buildKeysetPredicate,
+  buildOrderBy,
+  cursorFromRow,
+  decodeCursor,
+  defaultSortDir,
+  encodeCursor,
+  type DevicesSortDir,
+  type DevicesSortKey,
+} from './cursor';
 import { writeRouteAudit } from '../../services/auditEvents';
 import { resolveRemoteAccessForDevice } from '../../services/remoteAccessPolicy';
 import {
@@ -183,6 +195,25 @@ coreRoutes.post(
 );
 
 // GET /devices - List devices (paginated, filtered, sorted)
+//
+// Pagination modes (Discussion #742 PR 3):
+//   - **Cursor (default)**: pass `?cursor=<opaque>` (omit on first page).
+//     Server returns `{nextCursor, limit, total?}`. Scales to any fleet
+//     size; constant cost per page; stable under concurrent UPDATEs that
+//     don't touch the sort column. `total` is included only when the
+//     first page is requested with `includeTotal=true` — the client
+//     carries the count it receives across subsequent pages so we don't
+//     re-COUNT(*) per cursor step.
+//   - **Legacy offset**: pass `?page=N` (no cursor). Returns
+//     `{page, limit, total}` exactly as before for existing callers.
+//     Honored only when `page` is explicitly provided. New callers should
+//     migrate to the cursor mode.
+//
+// Sort whitelist: `hostname` (default, ASC), `lastSeen` (DESC),
+// `enrolled` (DESC). Each backed by a covering index. The keyset
+// ORDER BY/LIMIT is owned by `cursor.ts` and is never delegated to the
+// FilterConditionGroup engine — a filter-supplied ORDER BY would
+// silently break the keyset's monotonicity guarantee.
 coreRoutes.get(
   '/',
   requireScope('organization', 'partner', 'system'),
@@ -190,25 +221,41 @@ coreRoutes.get(
   async (c) => {
     const auth = c.get('auth');
     const query = c.req.valid('query');
-    // Devices list intentionally allows a higher cap than the default
-    // 100 — the web client paginates client-side over the returned set,
-    // so the cap is what gates how many devices a partner-scope user
-    // can see at once. 500 covers small MSP fleets in a single round
-    // trip while staying well under the ~1 MB JSON-payload mark.
-    // Longer-term, server-side sort/filter/page is needed for fleets
-    // beyond this range; tracked separately.
-    const { page, limit, offset } = getPagination(query, 500);
 
-    // Build conditions array
-    const conditions: ReturnType<typeof eq>[] = [];
+    // -------- pagination mode + page-size --------
+    const isCursorMode = query.page === undefined || query.cursor !== undefined;
+    const sort: DevicesSortKey = query.sort ?? 'hostname';
+    const sortDir: DevicesSortDir = query.sortDir ?? defaultSortDir(sort);
+    const limit = Math.min(
+      DEVICES_LIST_HARD_MAX,
+      Math.max(1, Number.parseInt(query.limit ?? String(DEVICES_LIST_DEFAULT_LIMIT), 10) || DEVICES_LIST_DEFAULT_LIMIT),
+    );
 
-    // Filter by org access (uses pre-computed accessibleOrgIds from auth middleware)
+    // Decode the incoming cursor up front so we can reject mismatches
+    // before paying for the row query. A cursor whose sort/dir does not
+    // match the query is a client bug, not a continuation — refuse it
+    // instead of silently restarting the walk and confusing the caller.
+    const cursor = isCursorMode ? decodeCursor(query.cursor ?? null) : null;
+    if (query.cursor && !cursor) {
+      return c.json({ error: 'Invalid or malformed cursor' }, 400);
+    }
+    if (cursor && (cursor.sort !== sort || cursor.sortDir !== sortDir)) {
+      return c.json(
+        { error: 'Cursor sort/sortDir does not match query — start a fresh walk' },
+        400,
+      );
+    }
+
+    // -------- row-filter predicates --------
+    const conditions: SQL[] = [];
+
+    // Org access — uses pre-computed accessibleOrgIds from auth.
     const orgFilter = auth.orgCondition(devices.orgId);
     if (orgFilter) {
       conditions.push(orgFilter);
     }
 
-    // Optional: filter to specific org if requested (must be accessible)
+    // Optional single-org filter (must be accessible).
     if (query.orgId) {
       if (!auth.canAccessOrg(query.orgId)) {
         return c.json({ error: 'Access to this organization denied' }, 403);
@@ -216,39 +263,91 @@ coreRoutes.get(
       conditions.push(eq(devices.orgId, query.orgId));
     }
 
-    // Additional filters
+    // Multi-org filter — first-class. Each entry must be accessible; we
+    // pre-check rather than rely on RLS to silently drop non-accessible
+    // ids (RLS would drop them but the caller wouldn't know the filter
+    // was effectively narrowed).
+    if (query.orgIds && query.orgIds.length > 0) {
+      for (const oid of query.orgIds) {
+        if (!auth.canAccessOrg(oid)) {
+          return c.json({ error: `Access to organization ${oid} denied` }, 403);
+        }
+      }
+      conditions.push(inArray(devices.orgId, query.orgIds));
+    }
+
     if (query.siteId) {
       conditions.push(eq(devices.siteId, query.siteId));
+    }
+    if (query.siteIds && query.siteIds.length > 0) {
+      conditions.push(inArray(devices.siteId, query.siteIds));
+    }
+
+    // Group membership filter — EXISTS subquery against the join table
+    // so we don't widen the SELECT row count if a device sits in
+    // multiple groups in the filter set.
+    if (query.groupIds && query.groupIds.length > 0) {
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM ${deviceGroupMemberships}
+        WHERE ${deviceGroupMemberships.deviceId} = ${devices.id}
+          AND ${deviceGroupMemberships.groupId} IN (${sql.join(
+            query.groupIds.map((g) => sql`${g}::uuid`),
+            sql`, `,
+          )})
+      )`);
     }
 
     if (query.status) {
       conditions.push(eq(devices.status, query.status));
     }
-
     if (query.osType) {
       conditions.push(eq(devices.osType, query.osType));
     }
-
+    if (query.role) {
+      conditions.push(eq(devices.deviceRole, query.role));
+    }
     if (query.search) {
       conditions.push(like(devices.hostname, `%${query.search}%`));
     }
 
-    // Exclude decommissioned by default unless explicitly requested
+    // Exclude decommissioned by default unless explicitly requested.
     if (!query.status && query.includeDecommissioned !== 'true') {
       conditions.push(sql`${devices.status} != 'decommissioned'`);
     }
 
+    // Keyset predicate (cursor mode only).
+    if (cursor) {
+      conditions.push(buildKeysetPredicate(cursor));
+    }
+
     const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count
-    const countResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(devices)
-      .where(whereCondition);
-    const total = Number(countResult[0]?.count ?? 0);
+    // -------- total (only if asked, only on first page) --------
+    // Cursor mode: count only when caller opts in AND there's no
+    // incoming cursor (the count is a once-per-walk thing the client
+    // carries). Offset mode: always count (legacy contract).
+    let total: number | undefined;
+    const wantsTotal = isCursorMode
+      ? query.includeTotal === 'true' && !cursor
+      : true;
+    if (wantsTotal) {
+      const countResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(devices)
+        .where(whereCondition);
+      total = Number(countResult[0]?.count ?? 0);
+    }
 
-    // Get devices with hardware summary
-    const deviceList = await db
+    // -------- row query --------
+    const orderBy = buildOrderBy(sort, sortDir);
+    // Cursor mode peeks one extra row to detect "is there a next page" —
+    // if N+1 rows come back, the (N+1)th becomes the nextCursor seed and
+    // is trimmed from the response data. Offset mode uses the requested
+    // limit verbatim.
+    const fetchLimit = isCursorMode ? limit + 1 : limit;
+    const offset = isCursorMode ? 0 : Math.max(0, ((Number.parseInt(query.page ?? '1', 10) || 1) - 1) * limit);
+
+    const rows = await db
       .select({
         id: devices.id,
         orgId: devices.orgId,
@@ -283,9 +382,20 @@ coreRoutes.get(
       .from(devices)
       .leftJoin(deviceHardware, eq(devices.id, deviceHardware.deviceId))
       .where(whereCondition)
-      .orderBy(desc(devices.lastSeenAt))
-      .limit(limit)
+      .orderBy(...orderBy)
+      .limit(fetchLimit)
       .offset(offset);
+
+    // Cursor-mode: split off the peek row to compute nextCursor.
+    let nextCursor: string | null = null;
+    let deviceList = rows;
+    if (isCursorMode && rows.length > limit) {
+      deviceList = rows.slice(0, limit);
+      const lastReturned = deviceList[deviceList.length - 1];
+      if (lastReturned) {
+        nextCursor = encodeCursor(cursorFromRow(lastReturned, sort, sortDir));
+      }
+    }
 
     const deviceIds = deviceList.map(d => d.id);
 
@@ -314,7 +424,7 @@ coreRoutes.get(
         deviceIds.map((id) => sql`(${id}::uuid)`),
         sql`, `
       );
-      const rows = await db.execute<{
+      const metricsRows = await db.execute<{
         device_id: string;
         cpu_percent: number;
         ram_percent: number;
@@ -331,7 +441,7 @@ coreRoutes.get(
         ) AS m ON true
       `);
 
-      for (const row of rows) {
+      for (const row of metricsRows) {
         latestMetricsByDevice.set(row.device_id, {
           cpuPercent: row.cpu_percent,
           ramPercent: row.ram_percent,
@@ -387,9 +497,25 @@ coreRoutes.get(
       };
     });
 
+    // Response shape diverges by pagination mode (see route-level comment).
+    if (isCursorMode) {
+      const pagination: { nextCursor: string | null; limit: number; total?: number } = {
+        nextCursor,
+        limit,
+      };
+      if (total !== undefined) pagination.total = total;
+      return c.json({
+        data,
+        pagination,
+        sort: { by: sort, dir: sortDir },
+      });
+    }
+
+    // Legacy offset response (existing callers): unchanged shape.
+    const legacyPage = Math.max(1, Number.parseInt(query.page ?? '1', 10) || 1);
     return c.json({
       data,
-      pagination: { page, limit, total }
+      pagination: { page: legacyPage, limit, total: total ?? 0 },
     });
   }
 );
