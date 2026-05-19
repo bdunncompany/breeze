@@ -28,6 +28,7 @@ export type NotificationChannel = {
   config: Record<string, unknown>;
   lastTestedAt?: string;
   lastTestStatus?: 'success' | 'failed';
+  lastTestMessage?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -271,7 +272,11 @@ export default function NotificationChannelList({
                 </p>
 
                 {/* Last Test Status */}
-                <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                <div
+                  className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"
+                  data-testid="channel-last-test"
+                  title={channel.lastTestMessage ?? undefined}
+                >
                   {channel.lastTestStatus === 'success' && (
                     <CheckCircle className="h-3 w-3 text-green-600" />
                   )}

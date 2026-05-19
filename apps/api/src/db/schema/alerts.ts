@@ -99,6 +99,7 @@ export const notificationChannels = pgTable('notification_channels', {
   enabled: boolean('enabled').notNull().default(true),
   lastTestedAt: timestamp('last_tested_at', { withTimezone: true }),
   lastTestStatus: varchar('last_test_status', { length: 16 }),
+  lastTestMessage: text('last_test_message'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
 });

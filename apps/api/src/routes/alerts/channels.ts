@@ -596,6 +596,7 @@ channelsRoutes.post(
         .set({
           lastTestedAt: new Date(),
           lastTestStatus: testResult.success ? 'success' : 'failed',
+          lastTestMessage: testResult.message ?? null,
         })
         .where(eq(notificationChannels.id, channel.id));
     } catch (persistError) {
