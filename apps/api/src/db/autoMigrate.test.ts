@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { detectState, hashSql, deriveAppConnectionString } from './autoMigrate';
+import {
+  detectState,
+  hashSql,
+  hasNoTransactionDirective,
+  deriveAppConnectionString,
+} from './autoMigrate';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -257,6 +262,51 @@ describe('autoMigrate', () => {
       }
 
       expect(violations).toEqual([]);
+    });
+  });
+
+  describe('hasNoTransactionDirective', () => {
+    it('returns true when "-- @no-transaction" is the first line', () => {
+      expect(hasNoTransactionDirective('-- @no-transaction\nCREATE INDEX foo ON bar (x);')).toBe(
+        true,
+      );
+    });
+
+    it('returns true when the directive has leading whitespace', () => {
+      expect(hasNoTransactionDirective('   -- @no-transaction\nSELECT 1;')).toBe(true);
+    });
+
+    it('returns true when the directive appears after non-directive lines', () => {
+      // Order in the file should not matter — operators may add the marker
+      // after a copyright header. The runner checks the whole file.
+      expect(
+        hasNoTransactionDirective('-- header\n-- comment\n-- @no-transaction\nSELECT 1;'),
+      ).toBe(true);
+    });
+
+    it('returns false when the directive is missing', () => {
+      expect(hasNoTransactionDirective('CREATE INDEX IF NOT EXISTS foo ON bar (x);')).toBe(false);
+    });
+
+    it('returns false for a comment that merely mentions @no-transaction inline', () => {
+      // The marker must be the start of the comment ("-- @no-transaction"),
+      // not a substring of a normal comment, so that a sentence like
+      // "# @no-transaction can be useful" in a docstring doesn't accidentally
+      // opt a migration out of the transaction.
+      expect(
+        hasNoTransactionDirective(
+          '-- This migration is normal. See the @no-transaction docs for index migrations.\nSELECT 1;',
+        ),
+      ).toBe(false);
+    });
+
+    it('returns false for a line that is not a SQL comment', () => {
+      expect(hasNoTransactionDirective('@no-transaction\nSELECT 1;')).toBe(false);
+      expect(hasNoTransactionDirective('# @no-transaction\nSELECT 1;')).toBe(false);
+    });
+
+    it('matches "@no-transaction" only as a whole word', () => {
+      expect(hasNoTransactionDirective('-- @no-transactional\nSELECT 1;')).toBe(false);
     });
   });
 });

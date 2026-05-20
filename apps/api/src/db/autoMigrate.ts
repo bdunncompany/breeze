@@ -18,6 +18,22 @@ export function hashSql(content: string): string {
 }
 
 /**
+ * True if a migration file opts out of the default transactional apply.
+ *
+ * Detection: the directive `-- @no-transaction` must appear at the start
+ * of a line (leading whitespace permitted) anywhere in the file. The
+ * marker is a plain SQL comment so the file remains executable through
+ * stock psql tooling. Statements like `CREATE INDEX CONCURRENTLY`,
+ * `REINDEX CONCURRENTLY`, and `VACUUM` are forbidden inside a tx by
+ * Postgres and require this opt-out.
+ *
+ * Exported for unit testing.
+ */
+export function hasNoTransactionDirective(content: string): boolean {
+  return /^\s*--\s*@no-transaction\b/m.test(content);
+}
+
+/**
  * Build a connection string for the unprivileged `breeze_app` role by taking
  * an admin DATABASE_URL and swapping in the app user+password. Returns null
  * if no password is available or the admin URL can't be parsed — callers
@@ -252,14 +268,41 @@ export async function autoMigrate(): Promise<void> {
       const content = await readFile(sqlPath, 'utf8');
       const checksum = hashSql(content);
 
-      console.log(`[auto-migrate] Applying: ${filename}`);
-      await client.begin(async (tx) => {
-        await tx.unsafe(content);
-        await tx.unsafe(
+      // Migrations marked with `-- @no-transaction` at the top run OUTSIDE
+      // a transaction. Required for statements Postgres forbids inside a
+      // tx — most notably `CREATE INDEX CONCURRENTLY`, which is the
+      // non-blocking variant we need on hot multi-million-row tables
+      // (devices, audit_logs, agent_logs) where a normal CREATE INDEX
+      // takes a SHARE lock and stalls every agent heartbeat / log ship /
+      // audit write for the duration of the build (#753 P0).
+      //
+      // Idempotency contract: a no-transaction migration MUST be safe to
+      // re-apply on partial failure — every statement should use
+      // `IF NOT EXISTS` / `IF EXISTS` / `CREATE OR REPLACE`. If the SQL
+      // succeeds but the breeze_migrations INSERT fails, the next run
+      // will re-apply the file; that's why `CREATE INDEX CONCURRENTLY IF
+      // NOT EXISTS` is the canonical pattern here. Recovery from a
+      // failed CONCURRENTLY (which leaves an invalid index) requires an
+      // operator to `DROP INDEX <name>` before the next deploy.
+      const isNoTransaction = hasNoTransactionDirective(content);
+      console.log(
+        `[auto-migrate] Applying: ${filename}${isNoTransaction ? ' (no-transaction)' : ''}`,
+      );
+      if (isNoTransaction) {
+        await client.unsafe(content);
+        await client.unsafe(
           `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)`,
           [filename, checksum],
         );
-      });
+      } else {
+        await client.begin(async (tx) => {
+          await tx.unsafe(content);
+          await tx.unsafe(
+            `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)`,
+            [filename, checksum],
+          );
+        });
+      }
       appliedCount++;
     }
 
