@@ -34,6 +34,112 @@ export function hasNoTransactionDirective(content: string): boolean {
 }
 
 /**
+ * Split a SQL file into individual statements for no-transaction execution.
+ *
+ * Postgres's simple-query protocol wraps multi-statement single queries
+ * in an implicit transaction — fatal for `CREATE INDEX CONCURRENTLY`,
+ * which Postgres refuses to run inside any transaction (CI proved this
+ * the first time we tried). The fix is to send each statement as its
+ * own command on the wire.
+ *
+ * This is a small targeted splitter, not a full SQL lexer. It handles
+ * the shapes used by no-transaction migrations in this repo:
+ *   - Line comments (`-- ...`) — stripped before splitting.
+ *   - Single- and double-quoted literals — `;` inside is preserved.
+ *   - Dollar-quoted blocks (`$$ ... $$`, `$tag$ ... $tag$`) — `;` inside is preserved.
+ *
+ * Returns the statements in original order with surrounding whitespace
+ * stripped and empty fragments removed.
+ *
+ * Exported for unit testing.
+ */
+export function splitSqlStatements(content: string): string[] {
+  // 1. Strip line comments — they can carry stray semicolons.
+  const stripped = content.replace(/--[^\n]*$/gm, '');
+
+  const out: string[] = [];
+  let buf = '';
+  let i = 0;
+  while (i < stripped.length) {
+    const ch = stripped[i]!;
+
+    // Single-quoted string literal: 'foo''bar'
+    if (ch === "'") {
+      buf += ch;
+      i++;
+      while (i < stripped.length) {
+        const c = stripped[i]!;
+        buf += c;
+        i++;
+        if (c === "'") {
+          if (stripped[i] === "'") {
+            buf += stripped[i]!;
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Double-quoted identifier: "foo""bar"
+    if (ch === '"') {
+      buf += ch;
+      i++;
+      while (i < stripped.length) {
+        const c = stripped[i]!;
+        buf += c;
+        i++;
+        if (c === '"') {
+          if (stripped[i] === '"') {
+            buf += stripped[i]!;
+            i++;
+          } else {
+            break;
+          }
+        }
+      }
+      continue;
+    }
+
+    // Dollar-quoted: $$...$$ or $tag$...$tag$
+    if (ch === '$') {
+      const tagMatch = stripped.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/);
+      if (tagMatch) {
+        const close = tagMatch[0];
+        buf += close;
+        i += close.length;
+        const end = stripped.indexOf(close, i);
+        if (end === -1) {
+          buf += stripped.slice(i);
+          i = stripped.length;
+        } else {
+          buf += stripped.slice(i, end + close.length);
+          i = end + close.length;
+        }
+        continue;
+      }
+    }
+
+    if (ch === ';') {
+      const trimmed = buf.trim();
+      if (trimmed.length > 0) out.push(trimmed);
+      buf = '';
+      i++;
+      continue;
+    }
+
+    buf += ch;
+    i++;
+  }
+
+  const tail = buf.trim();
+  if (tail.length > 0) out.push(tail);
+  return out;
+}
+
+/**
  * Build a connection string for the unprivileged `breeze_app` role by taking
  * an admin DATABASE_URL and swapping in the app user+password. Returns null
  * if no password is available or the admin URL can't be parsed — callers
@@ -289,7 +395,16 @@ export async function autoMigrate(): Promise<void> {
         `[auto-migrate] Applying: ${filename}${isNoTransaction ? ' (no-transaction)' : ''}`,
       );
       if (isNoTransaction) {
-        await client.unsafe(content);
+        // Send statements one at a time so each command leaves the
+        // driver as its own simple-query exchange. Sending the whole
+        // file via `client.unsafe(content)` would group the statements
+        // and Postgres treats a multi-statement simple query as an
+        // implicit transaction — which `CREATE INDEX CONCURRENTLY`
+        // refuses to run inside.
+        const statements = splitSqlStatements(content);
+        for (const stmt of statements) {
+          await client.unsafe(stmt);
+        }
         await client.unsafe(
           `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)`,
           [filename, checksum],
