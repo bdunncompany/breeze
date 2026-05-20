@@ -27,6 +27,7 @@ import {
   cursorFromRow,
   decodeCursor,
   defaultSortDir,
+  defaultSortKey,
   encodeCursor,
   type DevicesSortDir,
   type DevicesSortKey,
@@ -224,7 +225,11 @@ coreRoutes.get(
 
     // -------- pagination mode + page-size --------
     const isCursorMode = query.page === undefined || query.cursor !== undefined;
-    const sort: DevicesSortKey = query.sort ?? 'hostname';
+    // Default sort branches by pagination mode (see `defaultSortKey`):
+    // legacy `?page=N` callers keep the pre-cursor `last_seen_at DESC`
+    // ordering; cursor mode defaults to `hostname ASC` because the
+    // keyset's monotonicity is most stable on a NOT NULL string column.
+    const sort: DevicesSortKey = query.sort ?? defaultSortKey(isCursorMode);
     const sortDir: DevicesSortDir = query.sortDir ?? defaultSortDir(sort);
     const limit = Math.min(
       DEVICES_LIST_HARD_MAX,

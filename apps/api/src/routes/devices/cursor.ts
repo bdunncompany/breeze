@@ -27,10 +27,15 @@ import { devices } from '../../db/schema';
  *  device shape. Single named constant so the number is greppable. */
 export const DEVICES_LIST_HARD_MAX = 1000;
 
-/** Per-request default when the client doesn't pass `limit`. Matches the
- *  smallest UI selector option (10/25/50/100/200) above the natural
- *  median of a small-MSP fleet view. */
-export const DEVICES_LIST_DEFAULT_LIMIT = 50;
+/** Per-request default when the client doesn't pass `limit`. 500 matches
+ *  the previous unbounded-default behavior of `?page=1` callers prior to
+ *  PR #748's hard cap (the legacy contract returned up to 500 rows when
+ *  no `limit` was passed). Keeping the default at 500 means deploying
+ *  this PR (#777) before the cursor-walker (#778) ships does NOT visibly
+ *  drop the no-param devices-list from 500 to 50 rows for any existing
+ *  caller. #778 can lower the default once the cursor walker is in
+ *  production. */
+export const DEVICES_LIST_DEFAULT_LIMIT = 500;
 
 /** Whitelisted sort columns. Adding a new key requires (a) extending this
  *  tuple, (b) adding a `case` in `buildOrderBy` + `buildKeysetPredicate`,
@@ -73,6 +78,17 @@ function timestampToCursorKey(v: Date | string | null): string | null {
  *  hostnames, most-recently-seen first, newest-enrolled first. */
 export function defaultSortDir(sort: DevicesSortKey): DevicesSortDir {
   return sort === 'hostname' ? 'asc' : 'desc';
+}
+
+/** Default sort key when the caller omits `sort`. Differs by pagination
+ *  mode: offset mode (legacy `?page=N` callers) keeps the pre-cursor
+ *  contract of `last_seen_at DESC`; cursor mode defaults to `hostname`
+ *  because the keyset's monotonicity is most stable on a NOT NULL string
+ *  column. This branching is what prevents a silent ordering regression
+ *  for any external caller that lands between deploying #777 (server)
+ *  and #778 (web client). */
+export function defaultSortKey(isCursorMode: boolean): DevicesSortKey {
+  return isCursorMode ? 'hostname' : 'lastSeen';
 }
 
 const BASE64URL_TOKEN_RE = /^[A-Za-z0-9_-]+={0,2}$/;

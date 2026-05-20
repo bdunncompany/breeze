@@ -6,6 +6,7 @@ import {
   cursorFromRow,
   decodeCursor,
   defaultSortDir,
+  defaultSortKey,
   encodeCursor,
   type DevicesCursor,
 } from './cursor';
@@ -18,6 +19,14 @@ describe('cursor constants', () => {
   it('default limit is below the hard max', () => {
     expect(DEVICES_LIST_DEFAULT_LIMIT).toBeLessThan(DEVICES_LIST_HARD_MAX);
     expect(DEVICES_LIST_DEFAULT_LIMIT).toBeGreaterThan(0);
+  });
+
+  it('default limit is 500 — matches the pre-#777 unbounded-default contract for no-param callers', () => {
+    // Lowering this to a smaller number visibly drops the no-param
+    // devices-list from 500 to that number for any caller that lands
+    // before #778's cursor walker ships. Keep at 500 until #778 is live;
+    // then #778 can lower the default.
+    expect(DEVICES_LIST_DEFAULT_LIMIT).toBe(500);
   });
 
   it('sort whitelist is the three keys backed by covering indexes', () => {
@@ -34,6 +43,20 @@ describe('defaultSortDir', () => {
   });
   it('enrolled defaults to desc (newest first)', () => {
     expect(defaultSortDir('enrolled')).toBe('desc');
+  });
+});
+
+describe('defaultSortKey — pagination-mode-aware default sort', () => {
+  it('cursor mode defaults to `hostname` (keyset stable on NOT NULL string)', () => {
+    expect(defaultSortKey(true)).toBe('hostname');
+  });
+
+  it('offset mode defaults to `lastSeen` — preserves the pre-#777 contract for legacy `?page=N` callers', () => {
+    // Regression guard: a future "cleanup" that drops this mode branching
+    // would silently change every legacy `?page=N` caller's ordering from
+    // last_seen_at DESC → hostname ASC, breaking mobile, external API
+    // consumers, and the web during the deploy window before #778 ships.
+    expect(defaultSortKey(false)).toBe('lastSeen');
   });
 });
 
