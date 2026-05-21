@@ -8767,3 +8767,101 @@ select {
     height: 100% !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Page-level density rules.
+
+   The density preference (apps/web/src/lib/density.ts, breeze.density in
+   localStorage) is mirrored to <html data-density="..."> by both
+   theme-bootstrap.js (pre-paint) and writeDensity() (on change). These
+   rules tighten outer padding, card padding, section gaps, header
+   height, sidebar nav rows, and modal panels.
+
+   Targets are matched by the Tailwind utility classes the components
+   already use (e.g. .p-6, .gap-6) — no component code changes needed.
+   Comfortable is the default and has NO overrides here; the rules only
+   activate on compact/dense so the default layout is byte-for-byte
+   unchanged from before this feature.
+
+   Scale (rough): compact ≈ 25–35% tighter than comfortable, dense ≈
+   40–55% tighter. Values use Tailwind's spacing scale so they read
+   naturally next to the utility classes they override.
+
+   `!important` is used because the rules need to win over Tailwind
+   utility classes that share specificity but are emitted after this
+   block — Tailwind utilities use single-class selectors with the same
+   weight, so without `!important` the cascade order would flip-flop
+   with hot module reload order.
+   --------------------------------------------------------------------------- */
+
+/* Compact ------------------------------------------------------------------ */
+
+/* Main content wrapper: p-4 md:p-6 → p-3 md:p-4 */
+[data-density='compact'] main.flex-1 {
+  padding: 0.75rem !important;
+}
+@media (min-width: 768px) {
+  [data-density='compact'] main.flex-1 {
+    padding: 1rem !important;
+  }
+}
+
+/* Cards / panels: trim p-6 / p-5 / p-4 */
+[data-density='compact'] .p-6 { padding: 1rem !important; }
+[data-density='compact'] .p-5 { padding: 0.875rem !important; }
+[data-density='compact'] .p-4 { padding: 0.75rem !important; }
+[data-density='compact'] .px-6 { padding-left: 1rem !important; padding-right: 1rem !important; }
+[data-density='compact'] .py-6 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+[data-density='compact'] .px-4 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+[data-density='compact'] .py-4 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+
+/* Section gaps and stacks */
+[data-density='compact'] .gap-6 { gap: 1rem !important; }
+[data-density='compact'] .gap-4 { gap: 0.75rem !important; }
+[data-density='compact'] .space-y-6 > * + * { margin-top: 1rem !important; }
+[data-density='compact'] .space-y-4 > * + * { margin-top: 0.75rem !important; }
+
+/* Header — slightly shorter */
+[data-density='compact'] header.h-16 {
+  height: 3.5rem !important;
+}
+
+/* Sidebar nav rows: px-3 py-2 → px-2 py-1.5 */
+[data-density='compact'] .sidebar-nav a {
+  padding-top: 0.375rem !important;
+  padding-bottom: 0.375rem !important;
+}
+
+/* Dense -------------------------------------------------------------------- */
+
+[data-density='dense'] main.flex-1 {
+  padding: 0.5rem !important;
+}
+@media (min-width: 768px) {
+  [data-density='dense'] main.flex-1 {
+    padding: 0.75rem !important;
+  }
+}
+
+[data-density='dense'] .p-6 { padding: 0.75rem !important; }
+[data-density='dense'] .p-5 { padding: 0.625rem !important; }
+[data-density='dense'] .p-4 { padding: 0.5rem !important; }
+[data-density='dense'] .px-6 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+[data-density='dense'] .py-6 { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+[data-density='dense'] .px-4 { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+[data-density='dense'] .py-4 { padding-top: 0.5rem !important; padding-bottom: 0.5rem !important; }
+
+[data-density='dense'] .gap-6 { gap: 0.75rem !important; }
+[data-density='dense'] .gap-4 { gap: 0.5rem !important; }
+[data-density='dense'] .space-y-6 > * + * { margin-top: 0.75rem !important; }
+[data-density='dense'] .space-y-4 > * + * { margin-top: 0.5rem !important; }
+
+[data-density='dense'] header.h-16 {
+  height: 3rem !important;
+}
+
+[data-density='dense'] .sidebar-nav a {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+

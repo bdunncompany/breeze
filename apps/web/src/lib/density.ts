@@ -35,7 +35,10 @@ export function readDensity(): Density {
 // writeDensity persists the chosen density. Silently swallows quota /
 // SecurityError errors — the choice still applies in component state,
 // only persistence across reload is lost. Notifies subscribers so other
-// table instances on the same page re-read and re-render.
+// table instances on the same page re-read and re-render. Also mirrors
+// the value to a data-density attribute on <html> so the page-level CSS
+// rules in globals.css can tighten outer padding, card padding, gaps,
+// header height, sidebar nav rows, and modal padding.
 export function writeDensity(value: Density): void {
   if (!isValidDensity(value)) return;
   if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') return;
@@ -44,12 +47,26 @@ export function writeDensity(value: Density): void {
   } catch {
     // Quota / SecurityError — ignore.
   }
+  applyDensityAttribute(value);
   for (const fn of subscribers) {
     try {
       fn(value);
     } catch {
       // Subscriber errors must not break setter.
     }
+  }
+}
+
+// applyDensityAttribute sets data-density on <html> so descendant CSS
+// rules can target it. theme-bootstrap.js also does this inline on
+// first paint to avoid FOUC; this function exists so subsequent
+// React-driven changes stay in sync.
+export function applyDensityAttribute(value: Density): void {
+  if (typeof document === 'undefined') return;
+  try {
+    document.documentElement.setAttribute('data-density', value);
+  } catch {
+    // Unusable DOM (jsdom edge cases) — ignore.
   }
 }
 
