@@ -33,7 +33,10 @@ const listLogsSchema = z.object({
   action: z.string().min(1).optional(),
   resource: z.string().min(1).optional(),
   from: z.string().datetime().optional(),
-  to: z.string().datetime().optional()
+  to: z.string().datetime().optional(),
+  // RecentActivity widget doesn't display "X of Y total"; the count(*) is a
+  // 2-3s RLS-bound scan even with an index. Pass skipCount=true to skip it.
+  skipCount: z.enum(['true', 'false']).optional()
 });
 
 const searchSchema = listLogsSchema.extend({
@@ -428,8 +431,12 @@ function paginatedListHandler(
 
     const orgCond = auth.orgCondition(auditLogsTable.orgId);
     const where = buildFilterConditions(orgCond, query);
+    // count(*) on audit_logs is 2-3s under RLS even with the org_timestamp
+    // index. The dashboard widget that calls /logs?limit=5 doesn't need the
+    // count — it never displays "X of Y total". Pass skipCount=true there.
+    const skipCount = query.skipCount === 'true';
     const [total, rows] = await Promise.all([
-      countRows(where),
+      skipCount ? Promise.resolve(-1) : countRows(where),
       queryRows(where, limit, offset)
     ]);
 
@@ -439,7 +446,7 @@ function paginatedListHandler(
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit)
+        totalPages: total < 0 ? -1 : Math.ceil(total / limit)
       }
     });
   };
