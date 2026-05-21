@@ -223,6 +223,18 @@ type Heartbeat struct {
 	// real sendInventory call inside handleRefreshInventory. nil in
 	// production — the real sendInventory method is invoked.
 	sendInventoryFn func()
+
+	// watchdogConsecutiveMisses counts consecutive watchdog timeouts (i.e.
+	// heartbeat sends that exceeded the 15s ceiling without returning).
+	// Reset to 0 on every clean heartbeat completion. On the 2nd consecutive
+	// miss (~30s wedged) sendHeartbeatWithWatchdog escalates to a controlled
+	// process exit so SCM Service Recovery restarts a clean agent.
+	watchdogConsecutiveMisses atomic.Int32
+
+	// watchdogExitFn is the escalation hook called when consecutive watchdog
+	// timeouts cross the threshold. Defaults to os.Exit(1); tests override
+	// it to avoid killing the test runner.
+	watchdogExitFn func(int)
 }
 
 func New(cfg *config.Config) *Heartbeat {
@@ -1927,6 +1939,14 @@ func (h *Heartbeat) runHeartbeat() {
 	h.sendHeartbeat()
 }
 
+// watchdogConsecutiveMissThreshold is the number of consecutive watchdog
+// timeouts that triggers escalation to a controlled process exit. One miss
+// can be transient (a slow but recoverable HTTP retry). Two consecutive
+// misses (≈30s wall-clock with the default 15s timeout) is a wedged
+// goroutine that won't unstick on its own — SCM Service Recovery (or
+// systemd Restart=on-failure on Linux) is the cleanest recovery.
+const watchdogConsecutiveMissThreshold = 2
+
 // sendHeartbeatWithWatchdog wraps sendHeartbeat with a watchdog that dumps all
 // goroutine stacks if the call blocks longer than heartbeatWatchdogTimeout.
 // This instruments the heartbeat starvation symptom described in issue #387:
@@ -1935,6 +1955,13 @@ func (h *Heartbeat) runHeartbeat() {
 //
 // `done` is closed via defer so that a panic in sendHeartbeat still cancels
 // the watchdog instead of letting it fire a misleading "exceeded" warning.
+//
+// On the FIRST timeout the watchdog logs a goroutine-stack dump (diagnostic
+// only — could be a transient slow HTTP retry). On the Nth consecutive
+// timeout (watchdogConsecutiveMissThreshold) the watchdog logs an Error
+// and calls h.watchdogExitFn(1), which is os.Exit(1) in production. The
+// service manager restarts the agent from a clean process. The counter is
+// reset by every clean heartbeat completion.
 func (h *Heartbeat) sendHeartbeatWithWatchdog() {
 	start := time.Now()
 	// Snapshot the current timeout into a local so any test that overrides
@@ -1943,6 +1970,13 @@ func (h *Heartbeat) sendHeartbeatWithWatchdog() {
 	timeout := heartbeatWatchdogTimeout()
 	done := make(chan struct{})
 	defer close(done)
+
+	// watchdogFired is set by the watchdog goroutine when its timeout
+	// branch fires. The wrapper inspects it after runHeartbeat returns to
+	// decide whether the just-completed tick counts as "clean" (resetting
+	// the consecutive-miss counter) or "wedged-but-finally-finished" (NOT
+	// resetting, so a subsequent slow tick still escalates).
+	var watchdogFired atomic.Bool
 
 	go func() {
 		const maxDumpBytes = 100 * 1024 // 100 KB cap to avoid log storm
@@ -1953,21 +1987,41 @@ func (h *Heartbeat) sendHeartbeatWithWatchdog() {
 		case <-done:
 			// Normal return — watchdog cancelled.
 		case <-time.After(timeout):
+			watchdogFired.Store(true)
 			buf := make([]byte, 1<<20) // 1 MiB stack buffer
 			n := runtime.Stack(buf, true)
 			dump := string(buf[:n])
 			if len(dump) > maxDumpBytes {
 				dump = dump[:maxDumpBytes] + "\n... [truncated]"
 			}
+			misses := h.watchdogConsecutiveMisses.Add(1)
 			log.Warn("heartbeat send exceeded watchdog timeout — dumping goroutine stacks",
 				"elapsed_ms", time.Since(start).Milliseconds(),
 				"timeout_ms", timeout.Milliseconds(),
+				"consecutive_misses", misses,
 				"goroutines", dump)
+			if misses >= watchdogConsecutiveMissThreshold {
+				log.Error("heartbeat watchdog: consecutive miss threshold reached, exiting for service-manager restart",
+					"consecutive_misses", misses,
+					"threshold", watchdogConsecutiveMissThreshold)
+				exitFn := h.watchdogExitFn
+				if exitFn == nil {
+					exitFn = os.Exit
+				}
+				exitFn(1)
+			}
 		}
 	}()
 
 	h.runHeartbeat()
 
+	// Only a tick that finished BEFORE the watchdog fired counts as clean.
+	// A wedged tick that eventually returned long after the watchdog warned
+	// is still suspect — leave the counter alone so a subsequent slow tick
+	// crosses the escalation threshold.
+	if !watchdogFired.Load() {
+		h.watchdogConsecutiveMisses.Store(0)
+	}
 	log.Debug("heartbeat sent", "duration_ms", time.Since(start).Milliseconds())
 }
 
