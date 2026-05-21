@@ -62,8 +62,22 @@ make build-all # Cross-platform builds
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Mirror the CI gate locally before pushing. Each line maps 1:1 to a job
-   in `.github/workflows/ci.yml`:
+4. Mirror the CI gate locally before pushing.
+
+   **Security gates** (`.github/workflows/security.yml` + the `security-audit`
+   job in `.github/workflows/ci.yml`) can be run as a single wrapper:
+
+   ```bash
+   bash scripts/security/preflight.sh           # all 5 CI security jobs
+   bash scripts/security/preflight.sh --fast    # skip the Trivy image scan (~5-10 min)
+   ```
+
+   First-time setup: `go install golang.org/x/vuln/cmd/govulncheck@latest`,
+   `cargo install cargo-audit --locked`, and either install `trivy`
+   (`brew install trivy`) or have Docker/OrbStack running (the script falls
+   back to the `aquasec/trivy` image when the native binary is absent).
+
+   **Functional gates** — each line maps 1:1 to a job in `.github/workflows/ci.yml`:
 
    ```bash
    pnpm install --frozen-lockfile
