@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useEventStream } from '../../hooks/useEventStream';
-import { List, Grid, Plus, AlertCircle } from 'lucide-react';
+import { List, Grid, Plus, AlertCircle, Globe, Building2 } from 'lucide-react';
 import { showToast } from '../shared/Toast';
 import type { FilterConditionGroup } from '@breeze/shared';
+import { useOrgStore } from '../../stores/orgStore';
 import DeviceList, { type Device, type DeviceStatus, type OSType } from './DeviceList';
 import type { DeviceRole } from '@/lib/deviceRoles';
 import DeviceCard from './DeviceCard';
@@ -60,6 +61,51 @@ export default function DevicesPage() {
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [autoSelectGroupId, setAutoSelectGroupId] = useState<string | null>(null);
 
+  const { currentOrgId, organizations } = useOrgStore();
+
+  // Org scope toggle: 'current' narrows the list to currentOrgId, 'all' shows
+  // every device the caller's auth scope grants access to. URL-hash synced so
+  // the choice survives reload and is shareable. Default is 'current' so the
+  // org switcher's selection visibly narrows the list (it didn't before this
+  // toggle existed — the page silently showed every accessible org).
+  const [orgScope, setOrgScope] = useState<'current' | 'all'>(() => {
+    if (typeof window === 'undefined') return 'current';
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    return params.get('scope') === 'all' ? 'all' : 'current';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    if (orgScope === 'all') {
+      params.set('scope', 'all');
+    } else {
+      params.delete('scope');
+    }
+    const next = params.toString();
+    const desired = next ? `#${next}` : '';
+    if (window.location.hash !== desired) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${desired}`);
+    }
+  }, [orgScope]);
+
+  // When 'current' scope is active and we have a currentOrgId, lock the
+  // DeviceList's internal org filter to it. When 'all', leave the filter
+  // unlocked so the user sees every accessible org. null = unlocked.
+  const lockedOrgFilter: string | null = orgScope === 'current' ? currentOrgId : null;
+
+  const currentOrgName = useMemo(
+    () => organizations.find((o) => o.id === currentOrgId)?.name ?? 'Current org',
+    [organizations, currentOrgId]
+  );
+
+  // Grid view doesn't pass through DeviceList's filter logic, so apply the
+  // same scope filter here for parity.
+  const scopedDevices = useMemo(
+    () => (lockedOrgFilter ? devices.filter((d) => d.orgId === lockedOrgFilter) : devices),
+    [devices, lockedOrgFilter]
+  );
+
   const scriptTargetLabel =
     scriptTargetDevices.length === 1
       ? scriptTargetDevices[0].hostname
@@ -77,12 +123,19 @@ export default function DevicesPage() {
       setLoading(true);
       setError(null);
 
-      // Fetch devices, orgs, sites, and groups in parallel
+      // /devices opts out of fetchWithAuth's auto-injected orgId so the
+      // server returns every device in the caller's accessible scope,
+      // not just the current-org subset. The Current/All-orgs toggle
+      // then narrows client-side via DeviceList's lockedOrgFilter.
+      // Without the opt-out, "All orgs" looks identical to "Current org"
+      // because the server already pre-filtered.
       const [devicesResponse, orgsResponse, sitesResponse, groupsResponse] = await Promise.all([
         // limit=500 matches the API-side cap for /devices; the list is
         // paginated client-side after this fetch. Larger fleets need
         // server-side sort/filter/page — tracked separately.
-        fetchWithAuth('/devices?includeDecommissioned=true&limit=500'),
+        // skipOrgIdInjection: true so the All Orgs toggle can show every
+        // device in the caller's scope, not just current-org subset.
+        fetchWithAuth('/devices?includeDecommissioned=true&limit=500', {}, { skipOrgIdInjection: true }),
         fetchWithAuth('/orgs'),
         fetchWithAuth('/orgs/sites'),
         fetchWithAuth('/device-groups?includeMemberships=true').catch((err) => {
@@ -609,7 +662,43 @@ export default function DevicesPage() {
             Manage and monitor your fleet.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div
+            className="inline-flex rounded-md border"
+            role="group"
+            aria-label="Organization scope"
+            data-testid="org-scope-toggle"
+          >
+            <button
+              type="button"
+              onClick={() => setOrgScope('current')}
+              disabled={!currentOrgId}
+              title={currentOrgId ? `Show only ${currentOrgName}` : 'No current organization selected'}
+              aria-pressed={orgScope === 'current'}
+              data-testid="org-scope-current"
+              className={`flex h-10 items-center gap-1.5 rounded-l-md px-3 text-xs font-medium transition ${
+                orgScope === 'current' ? 'bg-muted' : 'hover:bg-muted/50'
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Current org</span>
+              <span className="sm:hidden">Org</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setOrgScope('all')}
+              title="Show every endpoint across all accessible organizations"
+              aria-pressed={orgScope === 'all'}
+              data-testid="org-scope-all"
+              className={`flex h-10 items-center gap-1.5 rounded-r-md border-l px-3 text-xs font-medium transition ${
+                orgScope === 'all' ? 'bg-muted' : 'hover:bg-muted/50'
+              }`}
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">All orgs</span>
+              <span className="sm:hidden">All</span>
+            </button>
+          </div>
           <div className="flex rounded-md border">
             <button
               type="button"
@@ -698,10 +787,11 @@ export default function DevicesPage() {
           onCreateGroup={() => setShowCreateGroup(true)}
           autoSelectGroupId={autoSelectGroupId}
           onAutoSelectConsumed={handleAutoSelectConsumed}
+          lockedOrgFilter={lockedOrgFilter}
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {devices.map(device => (
+          {scopedDevices.map(device => (
             <DeviceCard
               key={device.id}
               device={device}

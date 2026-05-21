@@ -77,6 +77,11 @@ type DeviceListProps = {
   // (see pageSizePreference.ts); subsequent changes to this prop are ignored.
   pageSize?: number;
   serverFilter?: FilterConditionGroup | null;
+  // External lock for the org filter. When set, overrides the user's
+  // dropdown selection and hides the dropdown itself (the parent owns
+  // the choice — e.g. via the Current-org / All-orgs scope toggle on
+  // DevicesPage). `null` means "do not lock; user controls via dropdown."
+  lockedOrgFilter?: string | null;
 };
 
 const statusColors: Record<DeviceStatus, string> = {
@@ -123,7 +128,8 @@ export default function DeviceList({
   onAction,
   onBulkAction,
   pageSize = 10,
-  serverFilter = null
+  serverFilter = null,
+  lockedOrgFilter = null
 }: DeviceListProps) {
   // Use provided timezone or browser default
   const effectiveTimezone = timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -305,7 +311,13 @@ export default function DeviceList({
         : device.status === statusFilter;
       const matchesOs = osFilter === 'all' ? true : device.os === osFilter;
       const matchesRole = roleFilter === 'all' ? true : device.deviceRole === roleFilter;
-      const matchesOrg = orgFilter === 'all' ? true : device.orgId === orgFilter;
+      // When the parent locks the org filter (Current-org scope on DevicesPage),
+      // its choice wins over the internal dropdown. `null` lock means the user
+      // controls via the dropdown.
+      const effectiveOrgFilter = lockedOrgFilter ?? orgFilter;
+      const matchesOrg = effectiveOrgFilter === 'all' || !effectiveOrgFilter
+        ? true
+        : device.orgId === effectiveOrgFilter;
       const matchesSite = siteFilter === 'all' ? true : device.siteId === siteFilter;
       const matchesGroup = groupFilter.length === 0
         ? true
@@ -313,7 +325,7 @@ export default function DeviceList({
 
       return matchesQuery && matchesStatus && matchesOs && matchesRole && matchesOrg && matchesSite && matchesGroup;
     });
-  }, [devices, query, statusFilter, osFilter, roleFilter, orgFilter, siteFilter, groupFilter, groupMembershipMap, serverFilterIds]);
+  }, [devices, query, statusFilter, osFilter, roleFilter, orgFilter, siteFilter, groupFilter, groupMembershipMap, serverFilterIds, lockedOrgFilter]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -857,7 +869,7 @@ export default function DeviceList({
                   </option>
                 ))}
               </select>
-              {orgs.length > 0 && (
+              {orgs.length > 0 && lockedOrgFilter === null && (
                 <select
                   value={orgFilter}
                   aria-label="Filter by organization"
