@@ -1,5 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { Hono } from 'hono';
+import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+// Set the avatar storage dir to a per-test-run tmp path BEFORE importing the
+// service (the service reads process.env.AVATAR_STORAGE_PATH at module load).
+const TMP_AVATAR_DIR = mkdtempSync(join(tmpdir(), 'breeze-avatar-test-'));
+process.env.AVATAR_STORAGE_PATH = TMP_AVATAR_DIR;
+
 import { userRoutes } from './users';
 
 const { sendInviteMock } = vi.hoisted(() => ({
@@ -119,6 +128,12 @@ import { authMiddleware } from '../middleware/auth';
 
 describe('user routes', () => {
   let app: Hono;
+
+  afterAll(() => {
+    if (existsSync(TMP_AVATAR_DIR)) {
+      rmSync(TMP_AVATAR_DIR, { recursive: true, force: true });
+    }
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -542,6 +557,156 @@ describe('user routes', () => {
 
       expect(res.status).toBe(403);
       expect(vi.mocked(db.update)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('avatar endpoints', () => {
+    const ME_ID = 'user-123';
+
+    // Minimal valid PNG bytes (1x1 transparent PNG)
+    const PNG_BYTES = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41,
+      0x54, 0x78, 0x9c, 0x62, 0x00, 0x01, 0x00, 0x00,
+      0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+      0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+      0x42, 0x60, 0x82,
+    ]);
+
+    // JPEG SOI + minimal junk (FF D8 FF E0 ...). Not a real image but the
+    // magic-byte check only inspects the first three bytes.
+    const JPEG_BYTES = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.alloc(64, 0),
+    ]);
+
+    // WebP RIFF header (12 bytes is enough for the sniff function).
+    const WEBP_BYTES = Buffer.concat([
+      Buffer.from([
+        0x52, 0x49, 0x46, 0x46, // RIFF
+        0x10, 0x00, 0x00, 0x00, // size
+        0x57, 0x45, 0x42, 0x50, // WEBP
+      ]),
+      Buffer.alloc(32, 0),
+    ]);
+
+    // SVG with a small XML preamble
+    const SVG_BYTES = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>', 'utf-8');
+
+    function makeUpdateMock(returning: unknown[]) {
+      vi.mocked(db.update).mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue(returning)
+          })
+        })
+      } as any);
+    }
+
+    function makeMultipart(field: string, bytes: Buffer, mime: string, filename: string): { body: BodyInit; headers: HeadersInit } {
+      const formData = new FormData();
+      // Buffer's polymorphic ArrayBufferLike confuses the Blob constructor type;
+      // copy into a fresh Uint8Array (whose buffer is a plain ArrayBuffer).
+      const view = new Uint8Array(bytes.byteLength);
+      view.set(bytes);
+      const blob = new Blob([view], { type: mime });
+      formData.append(field, blob, filename);
+      return {
+        body: formData,
+        // Browser/undici set Content-Type with boundary automatically when we
+        // pass a FormData to Request, so do NOT supply Content-Type manually.
+        headers: {}
+      };
+    }
+
+    describe('POST /users/me/avatar', () => {
+      it('accepts a PNG upload and writes /api/v1/users/<id>/avatar to users.avatar_url', async () => {
+        makeUpdateMock([{ id: ME_ID, avatarUrl: `/api/v1/users/${ME_ID}/avatar`, updatedAt: new Date() }]);
+
+        const { body, headers } = makeMultipart('file', PNG_BYTES, 'image/png', 'a.png');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.avatarUrl).toBe(`/api/v1/users/${ME_ID}/avatar`);
+        expect(data.mime).toBe('image/png');
+        expect(data.size).toBe(PNG_BYTES.length);
+      });
+
+      it('accepts a JPEG upload', async () => {
+        makeUpdateMock([{ id: ME_ID, avatarUrl: `/api/v1/users/${ME_ID}/avatar`, updatedAt: new Date() }]);
+        const { body, headers } = makeMultipart('file', JPEG_BYTES, 'image/jpeg', 'a.jpg');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.mime).toBe('image/jpeg');
+      });
+
+      it('accepts a WebP upload', async () => {
+        makeUpdateMock([{ id: ME_ID, avatarUrl: `/api/v1/users/${ME_ID}/avatar`, updatedAt: new Date() }]);
+        const { body, headers } = makeMultipart('file', WEBP_BYTES, 'image/webp', 'a.webp');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.mime).toBe('image/webp');
+      });
+
+      it('rejects SVG (not in MIME allowlist and fails magic-byte sniff)', async () => {
+        const { body, headers } = makeMultipart('file', SVG_BYTES, 'image/svg+xml', 'a.svg');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        expect(res.status).toBe(415);
+      });
+
+      it('rejects a file claiming image/png but containing JPEG bytes', async () => {
+        const { body, headers } = makeMultipart('file', JPEG_BYTES, 'image/png', 'fake.png');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        // image/png claimed but JPEG magic → 400 content-type mismatch
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects empty file', async () => {
+        const { body, headers } = makeMultipart('file', Buffer.alloc(0), 'image/png', 'a.png');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        expect(res.status).toBe(400);
+      });
+
+      it('rejects multipart without a file field', async () => {
+        const fd = new FormData();
+        fd.append('notfile', new Blob([PNG_BYTES], { type: 'image/png' }), 'a.png');
+        const res = await app.request('/users/me/avatar', { method: 'POST', body: fd });
+        expect(res.status).toBe(400);
+      });
+    });
+
+    describe('DELETE /users/me/avatar', () => {
+      it('clears avatar_url and returns avatarUrl: null', async () => {
+        makeUpdateMock([{ id: ME_ID, avatarUrl: null }]);
+        const res = await app.request('/users/me/avatar', { method: 'DELETE' });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.avatarUrl).toBeNull();
+      });
+    });
+
+    describe('POST then GET roundtrip', () => {
+      it('uploads a PNG and serves it back from GET /users/:id/avatar with image/png + cache headers', async () => {
+        makeUpdateMock([{ id: ME_ID, avatarUrl: `/api/v1/users/${ME_ID}/avatar`, updatedAt: new Date() }]);
+
+        const { body, headers } = makeMultipart('file', PNG_BYTES, 'image/png', 'a.png');
+        const postRes = await app.request('/users/me/avatar', { method: 'POST', body, headers });
+        expect(postRes.status).toBe(200);
+
+        const getRes = await app.request(`/users/${ME_ID}/avatar`, { method: 'GET' });
+        expect(getRes.status).toBe(200);
+        expect(getRes.headers.get('content-type')).toBe('image/png');
+        expect(getRes.headers.get('cache-control')).toBe('private, max-age=300');
+        expect(getRes.headers.get('etag')).toMatch(/^W\//);
+        const body2 = Buffer.from(await getRes.arrayBuffer());
+        expect(body2.equals(PNG_BYTES)).toBe(true);
+      });
     });
   });
 });
