@@ -1,10 +1,13 @@
 package helper
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -13,6 +16,37 @@ import (
 
 const registryKey = `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 const registryValue = "BreezeHelper"
+
+// msiexecTimeout is the hard ceiling for any msiexec invocation. A working
+// MSI install finishes in <30s on any reasonable Windows box; anything longer
+// is almost certainly wedged on the Windows Installer service. Holding the
+// helper.Manager mutex across a wedged msiexec is what causes the heartbeat
+// goroutine deadlock (see drafts/2026-05-21-heartbeat-goroutine-deadlock-analysis.md).
+const msiexecTimeout = 60 * time.Second
+
+// HelperInstallFailedSentinelPath is the marker file we touch when an MSI
+// install of the user-helper times out. The sessionbroker reads this file
+// (and the agent-start-time guard) to suppress the per-session fallback
+// spawn loop that otherwise piles up zombie breeze-agent.exe --user-helper
+// processes when the MSI install is broken. Variable, not const, so tests
+// can override it.
+var HelperInstallFailedSentinelPath = `C:\ProgramData\Breeze\helper_install_failed.lock`
+
+// touchHelperInstallFailedSentinel best-effort creates the sentinel file
+// that signals "user-helper MSI is broken; do not keep spawning the
+// fallback." Failures are logged but never returned: the install error is
+// what callers act on. The actual write logic lives in
+// writeHelperInstallFailedSentinel (install_sentinel.go) so it's testable
+// cross-platform.
+func touchHelperInstallFailedSentinel() {
+	if err := writeHelperInstallFailedSentinel(HelperInstallFailedSentinelPath); err != nil {
+		log.Warn("could not write helper install sentinel",
+			"path", HelperInstallFailedSentinelPath, "error", err.Error())
+		return
+	}
+	log.Warn("touched helper install sentinel; sessionbroker will suppress fallback spawns",
+		"path", HelperInstallFailedSentinelPath)
+}
 
 func packageExtension() string { return ".msi" }
 
@@ -29,12 +63,19 @@ func uninstallPackage() error {
 		return nil // not installed
 	}
 
-	cmd := exec.Command("msiexec", "/x", productCode, "/qn", "/norestart")
+	ctx, cancel := context.WithTimeout(context.Background(), msiexecTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "msiexec", "/x", productCode, "/qn", "/norestart")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 3010 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3010 {
 			log.Info("MSI uninstalled (reboot required)", "productCode", productCode)
 			return nil
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("msiexec /x %s timed out after %s (output: %s): %w",
+				productCode, msiexecTimeout, strings.TrimSpace(string(out)), err)
 		}
 		return fmt.Errorf("msiexec /x %s: %w (output: %s)", productCode, err, strings.TrimSpace(string(out)))
 	}
@@ -77,16 +118,34 @@ func findHelperProductCode(displayName string) (string, error) {
 	return "", nil
 }
 
-// installPackage runs the MSI installer silently.
+// installPackage runs the MSI installer silently with a hard timeout.
 // Exit code 3010 means success but reboot required — treated as success.
+//
+// The msiexecTimeout guard breaks the deadlock chain in the heartbeat
+// goroutine: previously this call held the helper.Manager mutex indefinitely
+// when the Windows Installer service was stuck, starving every later
+// heartbeat tick. On timeout we kill the msiexec process, touch the sentinel
+// file that tells the sessionbroker to stop spawning fallback user-helpers,
+// and return an error so the caller (Manager.Apply) releases the mutex.
 func installPackage(msiPath, _ string) error {
-	cmd := exec.Command("msiexec", "/i", msiPath, "/qn", "/norestart")
+	ctx, cancel := context.WithTimeout(context.Background(), msiexecTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "msiexec", "/i", msiPath, "/qn", "/norestart")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Exit code 3010 = ERROR_SUCCESS_REBOOT_REQUIRED
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 3010 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3010 {
 			log.Info("MSI installed successfully (reboot required)", "msi", msiPath)
 			return nil
+		}
+		// Context timeout? Kill is already best-effort via CommandContext;
+		// touch the sentinel so the sessionbroker suppresses the zombie loop.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			touchHelperInstallFailedSentinel()
+			return fmt.Errorf("msiexec timed out after %s (output: %s): %w",
+				msiexecTimeout, strings.TrimSpace(string(out)), err)
 		}
 		return fmt.Errorf("msiexec: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
