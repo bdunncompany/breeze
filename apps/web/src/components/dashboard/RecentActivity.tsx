@@ -3,6 +3,7 @@ import { FileCode, User, Settings, Monitor, AlertCircle, Activity } from 'lucide
 import { getErrorMessage, getErrorTitle } from '@/lib/errorMessages';
 import { fetchWithAuth } from '../../stores/auth';
 import { formatTimeAgo } from '@/lib/formatTime';
+import { formatAuditAction } from '@/lib/auditFormat';
 
 interface AuditLogEntry {
   id: string;
@@ -155,14 +156,17 @@ export default function RecentActivity() {
                 const targetType = (activity.resourceType || activity.targetType || 'default').toLowerCase();
                 const Icon = typeIcons[targetType] || typeIcons.default;
                 const userName = activity.user?.name || activity.userName || 'System';
-                const target = activity.target || activity.targetName || activity.resourceId || '-';
+                const targetName = activity.target || activity.targetName;
+                const target = targetName && targetName.trim()
+                  ? targetName
+                  : (activity.resourceType ? activity.resourceType : '-');
                 const timestamp = activity.timestamp || activity.createdAt || '';
 
                 return (
                   <tr key={activity.id} className="border-b border-border/50 last:border-b-0 hover:bg-muted/30 transition-colors">
                     <td className="py-3 text-sm">{userName}</td>
                     <td className="py-3 text-sm text-muted-foreground">
-                      {activity.action}
+                      {formatAuditAction(activity.action)}
                     </td>
                     <td className="py-3">
                       <div className="flex items-center gap-2 text-sm">
