@@ -34,6 +34,11 @@ const listLogsSchema = z.object({
   resource: z.string().min(1).optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
+  // Explicit single-org scope from the org-selector dropdown. When provided,
+  // BOTH the fast path and the standard path must filter to this one org —
+  // otherwise partner-scope users see rows from every accessible org (the
+  // dashboard "Recent Activity" widget cross-org leak fixed 2026-05-21).
+  orgId: z.string().uuid().optional(),
   // RecentActivity widget doesn't display "X of Y total"; the count(*) is a
   // 2-3s RLS-bound scan even with an index. Pass skipCount=true to skip it.
   skipCount: z.enum(['true', 'false']).optional(),
@@ -549,7 +554,15 @@ function paginatedListHandler(
     const query = c.req.valid('query');
     const { page, limit, offset } = getPagination(query);
 
-    const orgCond = auth.orgCondition(auditLogsTable.orgId);
+    // Explicit per-request org scope from the org-selector dropdown. If the
+    // caller asks for an org they cannot access, return 403 — do NOT silently
+    // fall back to the full accessible-org set.
+    if (query.orgId && !auth.canAccessOrg(query.orgId)) {
+      return c.json({ error: 'Access denied' }, 403);
+    }
+    const orgCond = query.orgId
+      ? eq(auditLogsTable.orgId, query.orgId)
+      : auth.orgCondition(auditLogsTable.orgId);
     const where = buildFilterConditions(orgCond, query);
     // count(*) on audit_logs is 2-3s under RLS even with the org_timestamp
     // index. The dashboard widget that calls /logs?limit=5 doesn't need the
@@ -557,18 +570,23 @@ function paginatedListHandler(
     const skipCount = query.skipCount === 'true';
     const hasFilters = !!(query.user || query.action || query.resource || query.from || query.to);
     const excludeActions = parseExcludeActions(query.excludeActions);
+    // Fast-path org list: if the caller pinned a single org via ?orgId=, scope
+    // the LATERAL scan to that one org. Otherwise span every accessible org.
+    const fastPathOrgIds: string[] | null = query.orgId
+      ? [query.orgId]
+      : (Array.isArray(auth.accessibleOrgIds) ? auth.accessibleOrgIds : null);
     // excludeActions is compatible with the fast path — it's applied inside
     // the LATERAL subquery before the per-org LIMIT.
     const canUseFastPath =
       skipCount &&
       offset === 0 &&
       !hasFilters &&
-      Array.isArray(auth.accessibleOrgIds) &&
-      auth.accessibleOrgIds.length > 0;
+      fastPathOrgIds !== null &&
+      fastPathOrgIds.length > 0;
     const [total, rows] = await Promise.all([
       skipCount ? Promise.resolve(-1) : countRows(where),
       canUseFastPath
-        ? queryLatestPerOrg(auth.accessibleOrgIds as string[], limit, excludeActions)
+        ? queryLatestPerOrg(fastPathOrgIds as string[], limit, excludeActions)
         : queryRows(where, limit, offset)
     ]);
 
