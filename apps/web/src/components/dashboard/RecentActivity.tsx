@@ -47,7 +47,7 @@ export default function RecentActivity() {
         setIsLoading(true);
         setError(null);
 
-        const response = await fetchWithAuth('/audit-logs/logs?limit=5');
+        const response = await fetchWithAuth('/audit-logs/logs?limit=5&skipCount=true');
 
         if (!response.ok) {
           throw response;
