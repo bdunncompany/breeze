@@ -72,7 +72,7 @@ export default function AuditLogDetail({ entry, isOpen, onClose, timezone }: Aud
                   <span className="font-medium text-foreground">Resource:</span> {entry.resource}{' '}
                   <span className="text-xs text-muted-foreground">({entry.resourceType})</span>
                 </p>
-                <p>
+                <p className="whitespace-pre-wrap break-all">
                   <span className="font-medium text-foreground">Details:</span> {entry.details}
                 </p>
               </div>
