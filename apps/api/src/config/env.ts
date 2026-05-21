@@ -32,3 +32,18 @@ export const OAUTH_CONSENT_URL_BASE = process.env.OAUTH_CONSENT_URL_BASE ?? '';
 export const OAUTH_JWKS_PRIVATE_JWK = process.env.OAUTH_JWKS_PRIVATE_JWK ?? '';
 export const OAUTH_JWKS_PUBLIC_JWK = process.env.OAUTH_JWKS_PUBLIC_JWK ?? '';
 export const OAUTH_COOKIE_SECRET = process.env.OAUTH_COOKIE_SECRET ?? '';
+
+// Cloudflare Access JWT trust on /auth/login (Discussion #702). Read at call
+// time so tests can flip per-test without resetting modules.
+export function cfAccessTrustEnabled(): boolean {
+  return envFlag('CF_ACCESS_TRUST_ENABLED');
+}
+export function cfAccessTeamDomain(): string {
+  return (process.env.CF_ACCESS_TEAM_DOMAIN ?? '').trim();
+}
+export function cfAccessAud(): string {
+  return (process.env.CF_ACCESS_AUD ?? '').trim();
+}
+export function cfAccessTrustsMfa(): boolean {
+  return envFlag('CF_ACCESS_TRUSTS_MFA');
+}
