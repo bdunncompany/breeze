@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { CheckCircle, Settings2 } from 'lucide-react';
+import { Building2, CheckCircle, Globe, Settings2 } from 'lucide-react';
 import AlertList, { type Alert } from './AlertList';
 import AlertDetails, { type StatusChange, type NotificationHistory } from './AlertDetails';
 import AlertsSummary from './AlertsSummary';
 import AlertsTabStrip from './AlertsTabStrip';
 import type { AlertSeverity } from './alertConfig';
 import { fetchWithAuth } from '../../stores/auth';
+import { useOrgStore } from '../../stores/orgStore';
 import type { FilterConditionGroup } from '@breeze/shared';
 import { DeviceFilterBar } from '../filters/DeviceFilterBar';
 import { navigateTo } from '@/lib/navigation';
@@ -29,11 +30,52 @@ export default function AlertsPage() {
   const [deviceFilterIds, setDeviceFilterIds] = useState<Set<string> | null>(null);
   const [pendingBulk, setPendingBulk] = useState<{ action: string; alerts: Alert[] } | null>(null);
 
+  const { currentOrgId, organizations } = useOrgStore();
+
+  // Org scope toggle: 'current' narrows the list to currentOrgId, 'all' shows
+  // every alert the caller's auth scope grants access to. URL-hash synced so
+  // the choice survives reload and is shareable. Default is 'current' so the
+  // org switcher's selection visibly narrows the list (matches DevicesPage).
+  const [orgScope, setOrgScope] = useState<'current' | 'all'>(() => {
+    if (typeof window === 'undefined') return 'current';
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    return params.get('scope') === 'all' ? 'all' : 'current';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    if (orgScope === 'all') {
+      params.set('scope', 'all');
+    } else {
+      params.delete('scope');
+    }
+    const next = params.toString();
+    const desired = next ? `#${next}` : '';
+    if (window.location.hash !== desired) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${desired}`);
+    }
+  }, [orgScope]);
+
+  // When 'current' scope is active and we have a currentOrgId, lock the
+  // list to that org by filtering at the page level. When 'all', leave it
+  // unlocked so the user sees every accessible org. null = unlocked.
+  const lockedOrgFilter: string | null = orgScope === 'current' ? currentOrgId : null;
+
+  const currentOrgName = useMemo(
+    () => organizations.find((o) => o.id === currentOrgId)?.name ?? 'Current org',
+    [organizations, currentOrgId]
+  );
+
   const fetchAlerts = useCallback(async () => {
     try {
       setLoading(true);
       setError(undefined);
-      const response = await fetchWithAuth('/alerts');
+      // skipOrgIdInjection: true so the All Orgs toggle can show every
+      // alert in the caller's scope, not just current-org subset. The API
+      // caps limit at 100 (apps/api/src/utils/pagination.ts); request that
+      // ceiling so cross-org views see as many alerts as one page allows.
+      const response = await fetchWithAuth('/alerts?limit=100', {}, { skipOrgIdInjection: true });
       if (!response.ok) {
         if (response.status === 401) {
           void navigateTo('/login', { replace: true });
@@ -52,7 +94,10 @@ export default function AlertsPage() {
 
   const fetchDevices = useCallback(async () => {
     try {
-      const response = await fetchWithAuth('/devices');
+      // Devices list backs the device-name dropdown in AlertList. Under
+      // All-orgs we want every accessible device name available, so opt
+      // out of orgId injection here too.
+      const response = await fetchWithAuth('/devices?limit=500', {}, { skipOrgIdInjection: true });
       if (response.ok) {
         const data = await response.json();
         const raw: Record<string, unknown>[] = data.data ?? data.devices ?? (Array.isArray(data) ? data : []);
@@ -110,13 +155,24 @@ export default function AlertsPage() {
     return () => { cancelled = true; };
   }, [deviceFilter]);
 
-  const filteredAlerts = useMemo(() => {
-    if (!deviceFilterIds) return alerts;
+  // First narrow by org scope so both the list and the summary tiles agree
+  // on which alerts are "in scope" for the current view. When lockedOrgFilter
+  // is null (All-orgs), this is a pass-through.
+  const summaryAlerts = useMemo(() => {
+    if (!lockedOrgFilter) return alerts;
     return alerts.filter(alert => {
+      const orgId = (alert as unknown as Record<string, unknown>).orgId as string | undefined;
+      return orgId === lockedOrgFilter;
+    });
+  }, [alerts, lockedOrgFilter]);
+
+  const filteredAlerts = useMemo(() => {
+    if (!deviceFilterIds) return summaryAlerts;
+    return summaryAlerts.filter(alert => {
       const deviceId = (alert as unknown as Record<string, unknown>).deviceId as string | undefined;
       return deviceId ? deviceFilterIds.has(deviceId) : true;
     });
-  }, [alerts, deviceFilterIds]);
+  }, [summaryAlerts, deviceFilterIds]);
 
   const handleSelect = async (alert: Alert) => {
     setSelectedAlert(alert);
@@ -275,7 +331,9 @@ export default function AlertsPage() {
     void navigateTo(`/alerts?severity=${severity}`);
   };
 
-  const alertCounts = alerts
+  // Count from summaryAlerts so the tiles respect the org-scope toggle and
+  // stay consistent with what the list below shows.
+  const alertCounts = summaryAlerts
     .filter(a => a.status === 'active' || a.status === 'acknowledged')
     .reduce(
       (acc, alert) => {
@@ -319,14 +377,52 @@ export default function AlertsPage() {
   return (
     <div className="space-y-5">
       <AlertsTabStrip />
-      <div>
-        <h1 className="text-xl font-bold tracking-tight">Alerts</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Monitor alerts across your devices. Rules are managed in{' '}
-          <a href="/configuration-policies" className="text-primary hover:underline">
-            Configuration Policies
-          </a>.
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">Alerts</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Monitor alerts across your devices. Rules are managed in{' '}
+            <a href="/configuration-policies" className="text-primary hover:underline">
+              Configuration Policies
+            </a>.
+          </p>
+        </div>
+        <div
+          className="inline-flex rounded-md border self-start"
+          role="group"
+          aria-label="Organization scope"
+          data-testid="org-scope-toggle"
+        >
+          <button
+            type="button"
+            onClick={() => setOrgScope('current')}
+            disabled={!currentOrgId}
+            title={currentOrgId ? `Show only ${currentOrgName}` : 'No current organization selected'}
+            aria-pressed={orgScope === 'current'}
+            data-testid="org-scope-current"
+            className={`flex h-10 items-center gap-1.5 rounded-l-md px-3 text-xs font-medium transition ${
+              orgScope === 'current' ? 'bg-muted' : 'hover:bg-muted/50'
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <Building2 className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Current org</span>
+            <span className="sm:hidden">Org</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setOrgScope('all')}
+            title="Show every alert across all accessible organizations"
+            aria-pressed={orgScope === 'all'}
+            data-testid="org-scope-all"
+            className={`flex h-10 items-center gap-1.5 rounded-r-md border-l px-3 text-xs font-medium transition ${
+              orgScope === 'all' ? 'bg-muted' : 'hover:bg-muted/50'
+            }`}
+          >
+            <Globe className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">All orgs</span>
+            <span className="sm:hidden">All</span>
+          </button>
+        </div>
       </div>
 
       {error && (
