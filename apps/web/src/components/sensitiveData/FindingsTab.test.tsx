@@ -113,4 +113,43 @@ describe('FindingsTab select-all (#809)', () => {
     fireEvent.click(headerCheckbox);
     expect(screen.queryByText(/Remediate \(/)).not.toBeInTheDocument();
   });
+
+  // Adopted from saracmert@'s #811: changing the search term while a
+  // selection exists clears it, so the user can't bulk-remediate rows
+  // they're no longer looking at.
+  it('changing the search term clears the existing selection', async () => {
+    render(<FindingsTab />);
+    await waitFor(() => {
+      expect(screen.getAllByRole('row').length).toBeGreaterThan(1);
+    });
+
+    // Select all 25 first.
+    const headerCheckbox = screen.getAllByRole('checkbox')[0];
+    fireEvent.click(headerCheckbox);
+    expect(screen.getByText(/Remediate \(25\)/)).toBeInTheDocument();
+
+    // Now type into search — selection should drop to zero.
+    const searchInput = screen.getByPlaceholderText(/Search file paths/i);
+    fireEvent.change(searchInput, { target: { value: '.npm' } });
+
+    expect(screen.queryByText(/Remediate \(/)).not.toBeInTheDocument();
+  });
+
+  // Empty-state row must render when a search filters out every row on
+  // the page, not just when the raw page is empty. Otherwise a
+  // matches-nothing search yields a body with zero rows AND no message
+  // — looks like a broken render.
+  it('shows "no findings on this page match your search" when the search filters everything out', async () => {
+    render(<FindingsTab />);
+    await waitFor(() => {
+      expect(screen.getAllByRole('row').length).toBeGreaterThan(1);
+    });
+
+    const searchInput = screen.getByPlaceholderText(/Search file paths/i);
+    fireEvent.change(searchInput, { target: { value: 'no-such-path-anywhere' } });
+
+    expect(
+      screen.getByText('No findings on this page match your search.')
+    ).toBeInTheDocument();
+  });
 });
