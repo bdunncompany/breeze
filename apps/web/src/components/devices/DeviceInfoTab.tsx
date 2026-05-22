@@ -4,6 +4,7 @@ import type { DesktopAccessState, TCCPermissions } from '@breeze/shared';
 import MacOSPermissionsCard from './MacOSPermissionsCard';
 import { fetchWithAuth } from '../../stores/auth';
 import { formatUptime } from '../../lib/utils';
+import { runAction, ActionError } from '../../lib/runAction';
 import {
   DEVICE_ROLES,
   getDeviceRoleLabel,
@@ -225,24 +226,24 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
     setSavingRole(true);
     setSaveError(null);
     try {
-      const response = await fetchWithAuth(`/devices/${deviceId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ deviceRole: selectedRole }),
+      await runAction({
+        request: () => fetchWithAuth(`/devices/${deviceId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ deviceRole: selectedRole }),
+        }),
+        errorFallback: 'Failed to save device role',
+        successMessage: 'Device role saved',
       });
-      if (response.ok) {
-        setInfo(prev => prev ? { ...prev, deviceRole: selectedRole, deviceRoleSource: 'manual' } : prev);
-        setEditingRole(false);
-      } else {
-        let detail = `Failed to save (HTTP ${response.status})`;
-        try {
-          const body = await response.json();
-          if (body.error) detail = body.error;
-        } catch { /* non-JSON response */ }
-        setSaveError(detail);
-      }
+      setInfo(prev => prev ? { ...prev, deviceRole: selectedRole, deviceRoleSource: 'manual' } : prev);
+      setEditingRole(false);
     } catch (err) {
-      console.error('Failed to save device role:', err);
-      setSaveError('Network error. Please check your connection and try again.');
+      if (err instanceof ActionError) {
+        if (err.status === 401) return;
+        setSaveError(err.message);
+      } else {
+        console.error('Failed to save device role:', err);
+        setSaveError('Network error. Please check your connection and try again.');
+      }
     } finally {
       setSavingRole(false);
     }
@@ -255,24 +256,28 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
     const trimmed = displayNameDraft.trim();
     const payload: { displayName: string | null } = { displayName: trimmed === '' ? null : trimmed };
     try {
-      const response = await fetchWithAuth(`/devices/${deviceId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(payload),
+      await runAction({
+        request: () => fetchWithAuth(`/devices/${deviceId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        }),
+        errorFallback: 'Failed to save display name',
+        successMessage: payload.displayName === null
+          ? 'Display name cleared'
+          : 'Display name saved',
       });
-      if (response.ok) {
-        setInfo(prev => prev ? { ...prev, displayName: payload.displayName } : prev);
-        setEditingDisplayName(false);
-      } else {
-        let detail = `Failed to save (HTTP ${response.status})`;
-        try {
-          const body = await response.json();
-          if (body.error) detail = body.error;
-        } catch { /* non-JSON response */ }
-        setSaveError(detail);
-      }
+      setInfo(prev => prev ? { ...prev, displayName: payload.displayName } : prev);
+      setEditingDisplayName(false);
     } catch (err) {
-      console.error('Failed to save display name:', err);
-      setSaveError('Network error. Please check your connection and try again.');
+      if (err instanceof ActionError) {
+        if (err.status === 401) return; // auth redirect handles UX
+        // runAction already surfaced a toast; mirror the message inline for
+        // the form so the user sees it next to the input.
+        setSaveError(err.message);
+      } else {
+        console.error('Failed to save display name:', err);
+        setSaveError('Network error. Please check your connection and try again.');
+      }
     } finally {
       setSavingDisplayName(false);
     }
@@ -288,27 +293,27 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
     setSaving(true);
     setSaveError(null);
     try {
-      const response = await fetchWithAuth(`/devices/${deviceId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ customFields: { [fieldKey]: editValue } }),
+      await runAction({
+        request: () => fetchWithAuth(`/devices/${deviceId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ customFields: { [fieldKey]: editValue } }),
+        }),
+        errorFallback: `Failed to save "${fieldKey}"`,
+        successMessage: 'Custom field saved',
       });
-      if (response.ok) {
-        setInfo(prev => prev ? {
-          ...prev,
-          customFields: { ...(prev.customFields ?? {}), [fieldKey]: editValue }
-        } : prev);
-        setEditingField(null);
-      } else {
-        let detail = `Failed to save (HTTP ${response.status})`;
-        try {
-          const body = await response.json();
-          if (body.error) detail = body.error;
-        } catch { /* non-JSON response */ }
-        setSaveError(detail);
-      }
+      setInfo(prev => prev ? {
+        ...prev,
+        customFields: { ...(prev.customFields ?? {}), [fieldKey]: editValue }
+      } : prev);
+      setEditingField(null);
     } catch (err) {
-      console.error(`Failed to save custom field "${fieldKey}":`, err);
-      setSaveError('Network error. Please check your connection and try again.');
+      if (err instanceof ActionError) {
+        if (err.status === 401) return;
+        setSaveError(err.message);
+      } else {
+        console.error(`Failed to save custom field "${fieldKey}":`, err);
+        setSaveError('Network error. Please check your connection and try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -424,6 +429,17 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      {/* Page-level save error. Hoisted out of the Custom Fields section
+          (which only renders when applicableFields.length > 0) so the
+          display-name / role / field error states are always visible. */}
+      {saveError && (
+        <div
+          role="alert"
+          className="lg:col-span-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {saveError}
+        </div>
+      )}
       <Section title="System" icon={<Monitor className="h-4 w-4 text-muted-foreground" />}>
         <InfoRow label="Hostname" value={info?.hostname ?? '—'} />
         <div className="flex items-center justify-between py-2">
@@ -671,11 +687,6 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
             <ListChecks className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Custom Fields</h3>
           </div>
-          {saveError && (
-            <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {saveError}
-            </div>
-          )}
           <dl className="divide-y">
             {applicableFields.map(def => {
               const currentValue = info?.customFields?.[def.fieldKey] ?? def.defaultValue ?? null;
