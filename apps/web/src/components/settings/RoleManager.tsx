@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { fetchWithAuth } from '../../stores/auth';
+import { navigateTo } from '@/lib/navigation';
 
 export type Permission = {
   resource: string;
@@ -61,26 +62,42 @@ export default function RoleManager({
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(null);
   const [rolePermissions, setRolePermissions] = useState<Record<string, Permission[]>>({});
   const [catalog, setCatalog] = useState<PermissionCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0);
+
+  const reloadCatalog = useCallback(() => setCatalogReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let cancelled = false;
+    setCatalogError(null);
     (async () => {
       try {
         const res = await fetchWithAuth('/permissions/catalog');
         if (!res.ok) {
-          console.error(`Failed to fetch permission catalog: ${res.status} ${res.statusText}`);
+          if (res.status === 401) {
+            void navigateTo('/login', { replace: true });
+            return;
+          }
+          if (!cancelled) {
+            setCatalogError(`Failed to load permissions (${res.status} ${res.statusText || 'error'})`);
+          }
           return;
         }
         const data = (await res.json()) as PermissionCatalog;
-        if (!cancelled) setCatalog(data);
+        if (!cancelled) {
+          setCatalog(data);
+          setCatalogError(null);
+        }
       } catch (err) {
-        console.error('Error fetching permission catalog:', err);
+        if (!cancelled) {
+          setCatalogError(err instanceof Error ? err.message : 'Failed to load permissions');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [catalogReloadKey]);
 
   const normalizePermissions = useCallback(
     (perms: Permission[]): Permission[] => {
@@ -345,7 +362,9 @@ export default function RoleManager({
                       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         Permissions for {role.name}
                       </div>
-                      {rolePermissions[role.id] && catalog ? (
+                      {catalogError ? (
+                        <CatalogLoadError message={catalogError} onRetry={reloadCatalog} />
+                      ) : rolePermissions[role.id] && catalog ? (
                         <PermissionMatrix
                           catalog={catalog}
                           permissions={rolePermissions[role.id]}
@@ -367,6 +386,24 @@ export default function RoleManager({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// Inline error block for permission-catalog fetch failures. Surfaces the
+// failure to the user with a Retry, instead of leaving the matrix wedged on
+// "Loading permissions..." forever.
+function CatalogLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-2 py-2 text-sm">
+      <p className="text-destructive">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded-md border px-3 py-1 text-xs font-medium hover:bg-muted"
+      >
+        Retry
+      </button>
     </div>
   );
 }
@@ -613,29 +650,45 @@ export function RoleFormModal({
   const [permissions, setPermissions] = useState<Permission[]>(role?.permissions || []);
   const [parentRoleId, setParentRoleId] = useState<string | null>(role?.parentRoleId || null);
   const [catalog, setCatalog] = useState<PermissionCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0);
+
+  const reloadCatalog = useCallback(() => setCatalogReloadKey((k) => k + 1), []);
 
   // Fetch permission catalog while modal is open. Issue #801: UI must render
   // from API's authoritative list so the matrix matches the allowlist gate.
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
+    setCatalogError(null);
     (async () => {
       try {
         const res = await fetchWithAuth('/permissions/catalog');
         if (!res.ok) {
-          console.error(`Failed to fetch permission catalog: ${res.status} ${res.statusText}`);
+          if (res.status === 401) {
+            void navigateTo('/login', { replace: true });
+            return;
+          }
+          if (!cancelled) {
+            setCatalogError(`Failed to load permissions (${res.status} ${res.statusText || 'error'})`);
+          }
           return;
         }
         const data = (await res.json()) as PermissionCatalog;
-        if (!cancelled) setCatalog(data);
+        if (!cancelled) {
+          setCatalog(data);
+          setCatalogError(null);
+        }
       } catch (err) {
-        console.error('Error fetching permission catalog:', err);
+        if (!cancelled) {
+          setCatalogError(err instanceof Error ? err.message : 'Failed to load permissions');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, catalogReloadKey]);
 
   // Reset form whenever the modal opens or the target role changes. Previously
   // this used useState(() => {...}), whose initializer runs only on first mount,
@@ -744,7 +797,11 @@ export function RoleFormModal({
               )}
             </p>
             <div className="rounded-md border">
-              {catalog ? (
+              {catalogError ? (
+                <div className="px-3 py-4">
+                  <CatalogLoadError message={catalogError} onRetry={reloadCatalog} />
+                </div>
+              ) : catalog ? (
                 <PermissionMatrix
                   catalog={catalog}
                   permissions={permissions}
@@ -772,7 +829,8 @@ export function RoleFormModal({
             </button>
             <button
               type="submit"
-              disabled={loading || !name.trim()}
+              disabled={loading || !name.trim() || !catalog}
+              title={!catalog ? 'Waiting for permission catalog to load' : undefined}
               className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading

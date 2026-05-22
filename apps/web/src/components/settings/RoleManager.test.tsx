@@ -8,6 +8,11 @@ vi.mock('../../stores/auth', () => ({
   fetchWithAuth: vi.fn()
 }));
 
+const navigateToMock = vi.fn();
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: (...args: unknown[]) => navigateToMock(...args)
+}));
+
 const fetchWithAuthMock = vi.mocked(fetchWithAuth);
 
 const makeJsonResponse = (payload: unknown, ok = true, status = ok ? 200 : 500): Response =>
@@ -63,6 +68,130 @@ describe('RoleManager — catalog-driven matrix (issue #801)', () => {
     await waitFor(() => {
       expect(fetchWithAuthMock).toHaveBeenCalledWith('/permissions/catalog');
     });
+  });
+});
+
+describe('RoleManager — catalog fetch failure handling (Todd review on #802)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigateToMock.mockReset();
+  });
+
+  it('Create modal shows an inline error + Retry button when catalog fetch returns 500', async () => {
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      if (String(input) === '/permissions/catalog') {
+        return makeJsonResponse({}, false, 500);
+      }
+      return makeJsonResponse({});
+    });
+
+    render(<RoleFormModal isOpen mode="create" onSubmit={() => {}} onCancel={() => {}} />);
+
+    // Wait for the error UI instead of the spinner.
+    await screen.findByText((t) => t.startsWith('Failed to load permissions'));
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+
+    // Spinner row must be gone.
+    expect(screen.queryByText('Loading permissions...')).toBeNull();
+  });
+
+  it('Create button is disabled while the catalog has not loaded (protects against silent zero-permission role creation)', async () => {
+    // Never resolve the catalog fetch so the matrix stays in the loading state.
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      if (String(input) === '/permissions/catalog') {
+        return new Promise<Response>(() => {});
+      }
+      return makeJsonResponse({});
+    });
+
+    render(<RoleFormModal isOpen mode="create" onSubmit={() => {}} onCancel={() => {}} />);
+
+    // Type a name so the !name.trim() condition is not the one disabling submit.
+    const nameInput = await screen.findByLabelText('Name');
+    fireEvent.change(nameInput, { target: { value: 'Tech' } });
+
+    const submitButton = screen.getByRole('button', { name: 'Create Role' }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+  });
+
+  it('Retry re-fetches the catalog and renders the matrix on the second attempt', async () => {
+    let attempt = 0;
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      if (String(input) === '/permissions/catalog') {
+        attempt += 1;
+        if (attempt === 1) return makeJsonResponse({}, false, 503);
+        return makeJsonResponse(sampleCatalog);
+      }
+      return makeJsonResponse({});
+    });
+
+    render(<RoleFormModal isOpen mode="create" onSubmit={() => {}} onCancel={() => {}} />);
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    fireEvent.click(retry);
+
+    // After retry, the matrix headers must render.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Read' })).toBeTruthy();
+    });
+    expect(attempt).toBe(2);
+  });
+
+  it('on 401 the modal redirects to /login and does NOT set the error state', async () => {
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      if (String(input) === '/permissions/catalog') {
+        return makeJsonResponse({}, false, 401);
+      }
+      return makeJsonResponse({});
+    });
+
+    render(<RoleFormModal isOpen mode="create" onSubmit={() => {}} onCancel={() => {}} />);
+
+    await waitFor(() => {
+      expect(navigateToMock).toHaveBeenCalledWith('/login', { replace: true });
+    });
+
+    // Error UI should NOT be shown when we're redirecting.
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('expansion row in the table shows the error UI when catalog fetch fails', async () => {
+    fetchWithAuthMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/permissions/catalog') {
+        return makeJsonResponse({}, false, 500);
+      }
+      if (url.startsWith('/roles/')) {
+        return makeJsonResponse({ permissions: [{ resource: 'devices', action: 'read' }] });
+      }
+      return makeJsonResponse({});
+    });
+
+    const systemRole: Role = {
+      id: 'sys-1',
+      name: 'Administrator',
+      description: null,
+      scope: 'system',
+      isSystem: true,
+      userCount: 1,
+      createdAt: '2026-05-21T00:00:00Z',
+      updatedAt: '2026-05-21T00:00:00Z'
+    };
+
+    render(<RoleManager roles={[systemRole]} />);
+
+    // Wait for the catalog fetch failure to register.
+    await waitFor(() => {
+      expect(fetchWithAuthMock).toHaveBeenCalledWith('/permissions/catalog');
+    });
+
+    // Click the system role row to expand it.
+    const adminRow = screen.getByText('Administrator').closest('tr');
+    expect(adminRow).toBeTruthy();
+    fireEvent.click(adminRow!);
+
+    await screen.findByText((t) => t.startsWith('Failed to load permissions'));
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 });
 
