@@ -55,8 +55,9 @@ describe('deriveSeverityFromScript', () => {
         '10': 'high',
       };
       // exit 5: no exact match. Lower defined codes: ["10","0"] filtered by < 5 -> ["0"]
-      // mapping["0"] is null -> skip, fallback to 'critical'.
-      expect(deriveSeverityFromScript(5, sparseMapping)).toBe('critical');
+      // mapping["0"] is null -> skip; no other lower codes -> fall back to 'medium'.
+      // (Was 'critical' before #798 review — see comment in scriptSeverity.ts.)
+      expect(deriveSeverityFromScript(5, sparseMapping)).toBe('medium');
       // exit 15: lower defined codes < 15: ["10","0"]. mapping["10"]='high' -> 'high'.
       expect(deriveSeverityFromScript(15, sparseMapping)).toBe('high');
     });
@@ -69,19 +70,22 @@ describe('deriveSeverityFromScript', () => {
       expect(deriveSeverityFromScript(0, mapping)).toBeNull();
     });
 
-    it('returns critical fallback when no lower codes are defined', () => {
+    it('falls back to medium (NOT critical) when no lower codes are defined', () => {
+      // #798 review fix: user explicitly mapped exit 10, so an unmapped
+      // exit 5 should not silently escalate beyond what they configured.
       const mapping: ScriptExitCodeSeverityMapping = {
         '10': 'high',
       };
-      // exit 5: no defined codes below 5 -> fallback to 'critical'
-      expect(deriveSeverityFromScript(5, mapping)).toBe('critical');
+      expect(deriveSeverityFromScript(5, mapping)).toBe('medium');
     });
 
-    it('handles an empty mapping object as legacy-not-set (silent on 0, critical otherwise)', () => {
+    it('treats an empty mapping {} as legacy-not-set (silent on 0, medium otherwise)', () => {
+      // #798 review fix: clearing all UI rows yields {} and must NOT
+      // silently escalate every non-zero to critical.
       const mapping: ScriptExitCodeSeverityMapping = {};
       expect(deriveSeverityFromScript(0, mapping)).toBeNull();
-      // exit non-zero with empty mapping: no defined codes -> fallback 'critical'
-      expect(deriveSeverityFromScript(1, mapping)).toBe('critical');
+      expect(deriveSeverityFromScript(1, mapping)).toBe('medium');
+      expect(deriveSeverityFromScript(99, mapping)).toBe('medium');
     });
 
     it('supports per-script overrides that silence certain exit codes', () => {
@@ -96,6 +100,27 @@ describe('deriveSeverityFromScript', () => {
     });
   });
 
+  describe('abnormal termination — negative exit codes', () => {
+    // #798 review fix: explicit branch for negative codes (Unix signal-kills
+    // like SIGKILL = -9). Previously these accidentally returned 'critical'
+    // via the empty-lower-code fallback; now they return 'critical' as a
+    // documented case with test coverage.
+    it('returns critical for SIGKILL (-9) regardless of mapping', () => {
+      expect(deriveSeverityFromScript(-9, null)).toBe('critical');
+      expect(deriveSeverityFromScript(-9, {})).toBe('critical');
+      expect(deriveSeverityFromScript(-9, { '0': null, '1': 'low' })).toBe('critical');
+    });
+
+    it('returns critical for SIGSEGV (-11)', () => {
+      expect(deriveSeverityFromScript(-11, null)).toBe('critical');
+    });
+
+    it('returns critical for any negative code', () => {
+      expect(deriveSeverityFromScript(-1, null)).toBe('critical');
+      expect(deriveSeverityFromScript(-128, null)).toBe('critical');
+    });
+  });
+
   describe('edge cases', () => {
     it('handles NaN exit code as 0', () => {
       expect(deriveSeverityFromScript(NaN, null)).toBeNull();
@@ -103,6 +128,12 @@ describe('deriveSeverityFromScript', () => {
 
     it('handles Infinity exit code as 0', () => {
       expect(deriveSeverityFromScript(Infinity, null)).toBeNull();
+    });
+
+    it('handles -Infinity exit code as 0 (not negative branch)', () => {
+      // -Infinity isn't finite, so the normalize-to-0 branch catches it
+      // before the negative-code check.
+      expect(deriveSeverityFromScript(-Infinity, null)).toBeNull();
     });
   });
 });

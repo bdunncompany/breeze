@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { exitCodeSeverityMappingSchema } from '@breeze/shared';
 import { and, eq, sql, desc, like, inArray, or, isNull } from 'drizzle-orm';
 import { escapeLike } from '../utils/sql';
 import { db } from '../db';
@@ -90,14 +91,10 @@ const listScriptsSchema = z.object({
   includeSystem: z.string().optional() // 'true' to include system scripts
 });
 
-// Feature #3 (severity-by-exit-code): exit code -> severity map.
-// Keys must be non-negative integer strings (e.g. "0", "1", "2").
-// Values are an AlertSeverity literal or null (null = no alert for that code).
-const alertSeverityValueSchema = z.enum(['critical', 'high', 'medium', 'low', 'info']);
-const exitCodeSeverityMappingSchema = z.record(
-  z.string().regex(/^\d+$/, 'Exit codes must be non-negative integer strings'),
-  alertSeverityValueSchema.nullable()
-);
+// Feature #3 (severity-by-exit-code): the wire-format schema for the
+// exit-code → AlertSeverity map. Defined in @breeze/shared so the UI form,
+// the route handler, and tests all import the same shape. Runtime severity
+// derivation lives in services/scriptSeverity.ts.
 
 const createScriptSchema = z.object({
   orgId: z.string().uuid().optional(),
