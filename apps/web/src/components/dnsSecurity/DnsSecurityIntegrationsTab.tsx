@@ -3,6 +3,7 @@ import { Plug, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { fetchWithAuth } from '../../stores/auth';
 import { runAction, ActionError } from '../../lib/runAction';
 import { navigateTo } from '@/lib/navigation';
+import AddDnsIntegrationModal from './AddDnsIntegrationModal';
 
 type Provider =
   | 'umbrella'
@@ -41,6 +42,7 @@ export default function DnsSecurityIntegrationsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const fetchIntegrations = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -119,9 +121,7 @@ export default function DnsSecurityIntegrationsTab() {
         <h2 className="text-lg font-medium">Configured integrations</h2>
         <button
           type="button"
-          // Add-integration modal lands in a follow-up PR; the button is wired
-          // up so the IA is visible but tells the operator where it's headed.
-          onClick={() => alert('Add Integration modal lands in a follow-up PR. For now, POST /dns-security/integrations directly with the provider-specific config payload.')}
+          onClick={() => setShowAddModal(true)}
           className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" />
@@ -203,6 +203,13 @@ export default function DnsSecurityIntegrationsTab() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showAddModal && (
+        <AddDnsIntegrationModal
+          onClose={() => setShowAddModal(false)}
+          onCreated={() => void fetchIntegrations()}
+        />
       )}
     </div>
   );
