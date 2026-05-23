@@ -797,17 +797,11 @@ describe('patch routes', () => {
     expect(body.error).toContain('Scheduled rollback');
   });
 
-  it('allows partner bulk approve when orgId is provided', async () => {
+  it('allows partner bulk approve when orgId is provided (asserts db.execute path)', async () => {
     mockAuthState.scope = 'partner';
     mockAuthState.orgId = null;
     mockAuthState.partnerId = 'partner-123';
     mockAuthState.accessibleOrgIds = [ACCESSIBLE_ORG_ID];
-
-    vi.mocked(db.insert).mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined)
-      })
-    } as any);
 
     const res = await app.request('/patches/bulk-approve', {
       method: 'POST',
@@ -824,20 +818,93 @@ describe('patch routes', () => {
     expect(body.success).toBe(true);
     expect(body.approved).toEqual([PATCH_ID]);
     expect(body.failed).toEqual([]);
+
+    // upsertPatchApproval uses raw SQL via db.execute(sql`...`) — NOT
+    // db.insert(...).values(...).onConflictDoUpdate(...). The prior version
+    // of these tests mocked db.insert, which silently never got called.
+    // (#821: tests mock db.insert but code uses db.execute.)
+    expect(db.execute).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+
+    // Inspect the sql tag payload. The mock at line 26 turns the `sql`
+    // template tag into { strings, values }, so the bound parameters are
+    // directly observable on the first arg to db.execute.
+    const executeMock = vi.mocked(db.execute);
+    const lastCall = executeMock.mock.calls[executeMock.mock.calls.length - 1]!;
+    const sqlPayload = lastCall[0] as unknown as { strings: TemplateStringsArray; values: unknown[] };
+    expect(sqlPayload.values).toContain(ACCESSIBLE_ORG_ID);
+    expect(sqlPayload.values).toContain(PATCH_ID);
+    expect(sqlPayload.values).toContain('approved');
+    // approvedAt is bound as an ISO string (PR #814 fix; postgres-js bind
+    // step rejects Date instances). helpers.ts binds order is:
+    //   [orgId, patchId, ringId, status, approvedBy, approvedAtIso,
+    //    deferUntilIso, notes, NIL_UUID]
+    // — so the ISO timestamp lives at values[5]. Assert that, AND scan to
+    // catch regressions if the bind order shifts.
+    const approvedAt = sqlPayload.values[5];
+    expect(typeof approvedAt).toBe('string');
+    expect(approvedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // Regression-safety: no raw Date instance survived to the bind layer.
+    expect(sqlPayload.values.some((v) => v instanceof Date)).toBe(false);
   });
 
-  it('allows system patch approve when orgId is provided', async () => {
+  it('falls back to query-param orgId for partner bulk approve when body omits it (#814 fallback path)', async () => {
+    mockAuthState.scope = 'partner';
+    mockAuthState.orgId = null;
+    mockAuthState.partnerId = 'partner-123';
+    mockAuthState.accessibleOrgIds = [ACCESSIBLE_ORG_ID];
+
+    const res = await app.request(`/patches/bulk-approve?orgId=${ACCESSIBLE_ORG_ID}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        patchIds: [PATCH_ID],
+        note: 'Query-param orgId'
+      })
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.approved).toEqual([PATCH_ID]);
+    // Verify the query-param org made it through to the SQL bind, not just
+    // that the request succeeded — a default-org bug would also 200 here.
+    const executeMock = vi.mocked(db.execute);
+    const lastCall = executeMock.mock.calls[executeMock.mock.calls.length - 1]!;
+    const sqlPayload = lastCall[0] as unknown as { values: unknown[] };
+    expect(sqlPayload.values).toContain(ACCESSIBLE_ORG_ID);
+  });
+
+  it('rejects partner bulk approve with 403 when query-param orgId is not accessible', async () => {
+    mockAuthState.scope = 'partner';
+    mockAuthState.orgId = null;
+    mockAuthState.partnerId = 'partner-123';
+    mockAuthState.accessibleOrgIds = [ACCESSIBLE_ORG_ID];
+
+    const OTHER_ORG_ID = '22222222-2222-2222-2222-222222222222';
+
+    const res = await app.request(`/patches/bulk-approve?orgId=${OTHER_ORG_ID}`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        patchIds: [PATCH_ID],
+        note: 'Cross-tenant attempt'
+      })
+    });
+
+    expect(res.status).toBe(403);
+    // The canAccessOrg gate fires before the SQL write — confirm we never
+    // got to the DB.
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows system patch approve when orgId is provided (asserts db.execute path + ISO date)', async () => {
     mockAuthState.scope = 'system';
     mockAuthState.orgId = null;
     mockAuthState.partnerId = null;
     mockAuthState.accessibleOrgIds = null;
 
     vi.mocked(db.select).mockReturnValueOnce(selectWhereLimitResult([{ id: PATCH_ID }]) as any);
-    vi.mocked(db.insert).mockReturnValueOnce({
-      values: vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined)
-      })
-    } as any);
 
     const res = await app.request(`/patches/${PATCH_ID}/approve`, {
       method: 'POST',
@@ -852,5 +919,14 @@ describe('patch routes', () => {
     const body = await res.json();
     expect(body.id).toBe(PATCH_ID);
     expect(body.status).toBe('approved');
+
+    expect(db.execute).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+    const executeMock = vi.mocked(db.execute);
+    const lastCall = executeMock.mock.calls[executeMock.mock.calls.length - 1]!;
+    const sqlPayload = lastCall[0] as unknown as { values: unknown[] };
+    expect(sqlPayload.values).toContain(ACCESSIBLE_ORG_ID);
+    expect(typeof sqlPayload.values[5]).toBe('string');
+    expect(sqlPayload.values.some((v) => v instanceof Date)).toBe(false);
   });
 });
