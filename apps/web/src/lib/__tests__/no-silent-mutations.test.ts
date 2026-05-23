@@ -35,6 +35,8 @@ const TARGET_GLOBS = [
   'src/components/devices/DeviceInfoTab.tsx',
   'src/components/dnsSecurity/DnsSecurityIntegrationsTab.tsx',
   'src/components/dnsSecurity/AddDnsIntegrationModal.tsx',
+  'src/components/dnsSecurity/DnsSecurityPoliciesTab.tsx',
+  'src/components/dnsSecurity/AddDnsPolicyModal.tsx',
 ];
 
 const absoluteFiles: string[] = TARGET_GLOBS.map((rel) => resolve(WEB_ROOT, '..', rel));

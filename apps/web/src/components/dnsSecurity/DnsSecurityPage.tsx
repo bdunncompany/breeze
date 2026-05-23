@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Network, Plug, ListChecks, ScrollText } from 'lucide-react';
 import DnsSecurityIntegrationsTab from './DnsSecurityIntegrationsTab';
+import DnsSecurityPoliciesTab from './DnsSecurityPoliciesTab';
 
 type Tab = 'overview' | 'integrations' | 'policies' | 'events';
 
@@ -58,7 +59,7 @@ export default function DnsSecurityPage() {
       <div role="tabpanel">
         {activeTab === 'overview' && <OverviewPlaceholder />}
         {activeTab === 'integrations' && <DnsSecurityIntegrationsTab />}
-        {activeTab === 'policies' && <PoliciesPlaceholder />}
+        {activeTab === 'policies' && <DnsSecurityPoliciesTab />}
         {activeTab === 'events' && <EventsPlaceholder />}
       </div>
     </div>
@@ -100,16 +101,6 @@ function OverviewPlaceholder() {
       DNS threat counters + top-blocked widget land here in a follow-up PR. The data
       endpoints (<code>/dns-security/stats</code>, <code>/dns-security/top-blocked</code>)
       are already API-complete.
-    </div>
-  );
-}
-
-function PoliciesPlaceholder() {
-  return (
-    <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
-      Policy editor (blocklist/allowlist domains, per-row table with add/delete + bulk paste)
-      lands in a follow-up PR. Backed by <code>GET/POST /dns-security/policies</code> and
-      <code>PATCH /dns-security/policies/:id/domains</code>.
     </div>
   );
 }
