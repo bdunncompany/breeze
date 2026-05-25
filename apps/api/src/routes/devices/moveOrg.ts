@@ -18,6 +18,7 @@ import {
 import { moveOrgSchema } from './schemas';
 import { writeRouteAudit } from '../../services/auditEvents';
 import { DEVICE_ORG_DENORMALIZED_TABLES } from './core';
+import { disconnectAgent } from '../agentWs';
 
 export const moveOrgRoutes = new Hono();
 
@@ -149,7 +150,28 @@ moveOrgRoutes.post(
       });
     } catch (err) {
       console.error(`[devices.moveOrg] failed for ${deviceId}:`, err);
+      // Best-effort audit on the failed cross-tenant move — a rolled-back
+      // attempt is security-relevant. Source-org row only since target
+      // never committed.
+      writeRouteAudit(c, {
+        orgId: sourceOrgId,
+        action: 'device.move_org.failed',
+        resourceType: 'device',
+        resourceId: deviceId,
+        resourceName: device.hostname,
+        details: { sourceOrgId, targetOrgId, sourceSiteId: device.siteId, targetSiteId, error: String(err) },
+      });
       return c.json({ error: 'Failed to move device between organizations' }, 500);
+    }
+
+    // Force-close any active WS so the agent reconnects with a fresh
+    // handshake on the new org_id. Without this, createAgentWsHandlers
+    // (agentWs.ts:1411) closes over the SOURCE-org preValidatedAgent for
+    // the lifetime of the connection — every subsequent runWithAgentDbAccess
+    // (status, IP history, event publish, command result) writes telemetry
+    // under the OLD org's RLS context until the agent eventually reconnects.
+    if (updated?.agentId) {
+      disconnectAgent(updated.agentId, 4040, 'device moved to a different organization, reconnecting');
     }
 
     // Audit on BOTH orgs so the move shows up in source and target feeds.

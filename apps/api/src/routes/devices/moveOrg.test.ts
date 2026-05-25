@@ -42,9 +42,14 @@ vi.mock('../../services/auditEvents', () => ({
   writeRouteAudit: vi.fn(),
 }));
 
+vi.mock('../agentWs', () => ({
+  disconnectAgent: vi.fn(() => true),
+}));
+
 import { db } from '../../db';
 import { getDeviceWithOrgAndSiteCheck } from './helpers';
 import { writeRouteAudit } from '../../services/auditEvents';
+import { disconnectAgent } from '../agentWs';
 import { moveOrgRoutes } from './moveOrg';
 import { DEVICE_ORG_DENORMALIZED_TABLES } from './core';
 
@@ -70,6 +75,7 @@ const OTHER_PARTNER_TARGET_ORG = '66666666-6666-4666-8666-666666666666';
 
 const SAMPLE_DEVICE = {
   id: DEVICE_ID,
+  agentId: 'agent-abc-123',
   orgId: SOURCE_ORG,
   siteId: SOURCE_SITE,
   hostname: 'host-1',
@@ -220,6 +226,48 @@ describe('POST /devices/:id/move-org', () => {
       // only post-move": each row in those tables has its org_id rewritten
       // to the new org, so RLS in the OLD org no longer matches it.
       expect(updatedTables).toEqual([...DEVICE_ORG_DENORMALIZED_TABLES]);
+
+      // After the move, the live WS for this agent MUST be closed so the
+      // reconnect handshake resolves the new org_id. Otherwise every
+      // subsequent runWithAgentDbAccess call writes telemetry under the OLD
+      // org's RLS context until natural reconnect (could be hours).
+      expect(disconnectAgent).toHaveBeenCalledWith(
+        'agent-abc-123',
+        expect.any(Number),
+        expect.stringContaining('different organization'),
+      );
+    });
+
+    it('writes device.move_org.failed audit when the transaction rolls back', async () => {
+      vi.mocked(getDeviceWithOrgAndSiteCheck).mockResolvedValue(SAMPLE_DEVICE as never);
+      rigOrgAndSiteSelects({
+        orgRows: [
+          { id: SOURCE_ORG, partnerId: 'partner-1' },
+          { id: TARGET_ORG, partnerId: 'partner-1' },
+        ],
+        siteRow: { id: TARGET_SITE },
+      });
+      // Force the transaction to throw — simulates an FK violation or DB hiccup mid-cascade
+      vi.mocked(db.transaction).mockImplementationOnce(async () => {
+        throw new Error('simulated DB error mid-cascade');
+      });
+
+      const res = await app.request(`/devices/${DEVICE_ID}/move-org`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer t', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgId: TARGET_ORG, siteId: TARGET_SITE }),
+      });
+
+      expect(res.status).toBe(500);
+
+      // Exactly one failure-audit row on the source org (target never committed)
+      expect(writeRouteAudit).toHaveBeenCalledTimes(1);
+      const auditCall = vi.mocked(writeRouteAudit).mock.calls[0]?.[1] as any;
+      expect(auditCall?.action).toBe('device.move_org.failed');
+      expect(auditCall?.orgId).toBe(SOURCE_ORG);
+
+      // No WS disconnect on failure (device never actually moved)
+      expect(disconnectAgent).not.toHaveBeenCalled();
     });
   });
 
