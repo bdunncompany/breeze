@@ -465,6 +465,67 @@ describe('POST /agents/enroll — 401 reason disambiguation', () => {
         }),
       })
     );
+    // AND: an audit row was written for the admin-approved replacement bypass
+    expect(writeAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'agent.enroll',
+        resourceId: 'device-decom-existing',
+        result: 'success',
+        details: expect.objectContaining({
+          reason: 'decommissioned_row_reenrolled',
+          priorDeviceId: 'device-decom-existing',
+        }),
+      })
+    );
+  });
+
+  it('regression: status=offline (not decommissioned) still 409s without an existing-device token', async () => {
+    // Defense against future refactors that might widen the decommissioned
+    // bypass — make sure 'offline' rows continue to require the prior token.
+    mockKeyLookup({
+      id: 'key-offline',
+      orgId: 'org-offline',
+      siteId: 'site-offline',
+      keySecretHash: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      maxUsage: 10,
+      usageCount: 0,
+    });
+
+    vi.mocked(db.update).mockReturnValueOnce({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          returning: vi.fn().mockResolvedValue([{
+            id: 'key-offline',
+            orgId: 'org-offline',
+            siteId: 'site-offline',
+          }]),
+        })),
+      })),
+    } as any);
+
+    mockSelectRows([{ partnerId: 'partner-offline' }]);
+    mockSelectRows([{ maxDevices: null }]);
+    // Existing row is OFFLINE (the normal "device hasn't checked in" state),
+    // NOT decommissioned — no token attached to request.
+    mockSelectRows([{
+      id: 'device-offline-existing',
+      status: 'offline',
+      agentTokenHash: 'old-offline-hash',
+      previousTokenHash: null,
+      previousTokenExpiresAt: null,
+    }]);
+
+    const resp = await buildApp().request('/agents/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(baseEnrollBody),
+    });
+
+    expect(resp.status).toBe(409);
+    const body = await resp.json();
+    expect(body.reason).toBe('hostname_collision_requires_existing_device_token');
   });
 });
 

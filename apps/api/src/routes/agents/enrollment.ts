@@ -402,6 +402,24 @@ enrollmentRoutes.post('/enroll', zValidator('json', enrollSchema), async (c) => 
         // loops on 409 until an operator hand-renames the decommissioned
         // row in SQL to free the hostname.
         existingDeviceAuthenticated = true;
+        // Audit the admin-approved-replacement bypass for forensic
+        // traceability. Re-enrollment onto a decommissioned slot is a
+        // sensitive transition (new tokens issued, device id preserved) and
+        // must be traceable independent of the success-path audit below.
+        writeAuditEvent(c, {
+          orgId: key.orgId,
+          actorType: 'system',
+          action: 'agent.enroll',
+          resourceType: 'device',
+          resourceId: existingDevice.id,
+          resourceName: data.hostname,
+          details: {
+            reason: 'decommissioned_row_reenrolled',
+            siteId,
+            priorDeviceId: existingDevice.id,
+          },
+          result: 'success',
+        });
       } else {
         const now = new Date();
         const existingDeviceToken = getProvidedExistingDeviceToken(c);
