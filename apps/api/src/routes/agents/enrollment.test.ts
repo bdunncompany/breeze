@@ -527,6 +527,86 @@ describe('POST /agents/enroll — 401 reason disambiguation', () => {
     const body = await resp.json();
     expect(body.reason).toBe('hostname_collision_requires_existing_device_token');
   });
+
+  it('denies re-enrollment when the existing row is decommissioned AND its token was probe-suspended', async () => {
+    // Suspension trumps decommission. Task 18 added auto-suspend-on-probe
+    // (commit 2669ea43); the maintainer's explicit intent is that
+    // unsuspending be manual — "the reconnect-loop on a single device is the
+    // desired ops alarm signal." An admin DELETE of a probe-suspended device
+    // must NOT auto-restore the slot. The operator has to clear
+    // agent_token_suspended_at deliberately first, which leaves an audit
+    // trail of the "yes, I cleared a security suspension" decision.
+    //
+    // Real-world sequence A: probe-storm suspended the token at t=0, ops
+    // alarm fired (reconnect-loop), admin investigated, decided the box was
+    // compromised/abandoned, and decommissioned it. Without this gate, the
+    // hostname could silently re-enroll with fresh tokens after the
+    // suspension alarm fired — defeating the security signal.
+    mockKeyLookup({
+      id: 'key-suspended-decom',
+      orgId: 'org-suspended-decom',
+      siteId: 'site-suspended-decom',
+      keySecretHash: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      maxUsage: 10,
+      usageCount: 0,
+    });
+
+    vi.mocked(db.update).mockReturnValueOnce({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          returning: vi.fn().mockResolvedValue([{
+            id: 'key-suspended-decom',
+            orgId: 'org-suspended-decom',
+            siteId: 'site-suspended-decom',
+          }]),
+        })),
+      })),
+    } as any);
+
+    mockSelectRows([{ partnerId: 'partner-suspended-decom' }]);
+    mockSelectRows([{ maxDevices: null }]);
+    // Existing row: DECOMMISSIONED AND token-suspended.
+    mockSelectRows([{
+      id: 'device-suspended-decom',
+      status: 'decommissioned',
+      agentTokenHash: 'old-suspended-hash',
+      previousTokenHash: null,
+      previousTokenExpiresAt: null,
+      agentTokenSuspendedAt: new Date('2026-05-25T12:00:00Z'),
+    }]);
+
+    const resp = await buildApp().request('/agents/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(baseEnrollBody),
+    });
+
+    expect(resp.status).toBe(409);
+    const body = (await resp.json()) as Record<string, unknown>;
+    expect(body.reason).toBe('existing_decommissioned_row_has_suspended_token');
+    // Audit row was written denying the attempt — not silently allowed.
+    expect(writeAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'agent.enroll',
+        resourceId: 'device-suspended-decom',
+        result: 'denied',
+        details: expect.objectContaining({
+          reason: 'existing_decommissioned_row_has_suspended_token',
+        }),
+      })
+    );
+    // NOT the decom-bypass success audit
+    expect(writeAuditEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        details: expect.objectContaining({
+          reason: 'decommissioned_row_reenrolled',
+        }),
+      })
+    );
+  });
 });
 
 describe('POST /agents/enroll — ENROLLMENT_SECRET_ENFORCEMENT_MODE', () => {
