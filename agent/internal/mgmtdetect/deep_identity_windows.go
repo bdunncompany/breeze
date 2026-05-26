@@ -17,7 +17,7 @@ func collectIdentityStatus() IdentityStatus {
 	cmd := exec.CommandContext(ctx, "dsregcmd", "/status")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Warn("dsregcmd failed, falling back to registry", "error", err)
+		log.Warn("dsregcmd failed, falling back to registry", "error", err.Error())
 		fb := collectIdentityStatusFromRegistry()
 		// Tag the source so the UI shows the real reason, not just "dsregcmd_error"
 		if fb.JoinType == JoinTypeNone {
@@ -55,7 +55,7 @@ func collectIdentityStatusFromRegistry() IdentityStatus {
 		`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`,
 		registry.READ)
 	if err != nil {
-		log.Warn("registry identity fallback: failed to open Tcpip\\Parameters", "error", err)
+		log.Warn("registry identity fallback: failed to open Tcpip\\Parameters", "error", err.Error())
 		id.JoinType = JoinTypeNone
 		return id
 	}
