@@ -1,4 +1,5 @@
 import {
+  foreignKey,
   index,
   inet,
   jsonb,
@@ -6,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -132,6 +134,11 @@ export const elevationRequests = pgTable(
     orgIdIdx: index('elevation_requests_org_id_idx').on(table.orgId),
     statusIdx: index('elevation_requests_status_idx').on(table.status),
     createdAtIdx: index('elevation_requests_created_at_idx').on(table.createdAt),
+    // Composite-FK target: unique on (id, org_id) so elevation_audit can
+    // reference it via FK. `id` is already PK so this adds no new tenancy
+    // invariant — it just declares the tuple the composite FK references.
+    // Mirrors organizations_id_partner_uq (2026-04-11-users-rls.sql §3).
+    idOrgIdUq: unique('elevation_requests_id_org_id_key').on(table.id, table.orgId),
     // Note: the partial / WHERE-clause indexes
     //   elevation_requests_org_pending_idx,
     //   elevation_requests_expires_at_idx,
@@ -158,9 +165,12 @@ export const elevationAudit = pgTable(
     // incident_evidence / incident_actions.
     orgId: uuid('org_id').notNull().references(() => organizations.id),
 
-    elevationRequestId: uuid('elevation_request_id')
-      .notNull()
-      .references(() => elevationRequests.id, { onDelete: 'cascade' }),
+    // FK declared as a composite (elevation_request_id, org_id) →
+    // elevation_requests(id, org_id) in the table-options block below.
+    // No single-column .references() here — the composite FK is the only
+    // DB-level tie, which guarantees the denormalized org_id matches the
+    // parent's org_id (Shape-4 pattern, mirrors users_org_partner_fk).
+    elevationRequestId: uuid('elevation_request_id').notNull(),
 
     eventType: elevationAuditEventTypeEnum('event_type').notNull(),
     actor: elevationAuditActorEnum('actor').notNull(),
@@ -178,6 +188,15 @@ export const elevationAudit = pgTable(
     ),
     orgIdIdx: index('elevation_audit_org_id_idx').on(table.orgId),
     eventTypeIdx: index('elevation_audit_event_type_idx').on(table.eventType),
+    // Composite FK: (elevation_request_id, org_id) →
+    // elevation_requests(id, org_id). Structural guarantee that the
+    // denormalized org_id always matches the parent row's org_id.
+    // ON DELETE CASCADE preserves the original single-column FK semantics.
+    elevationRequestOrgFk: foreignKey({
+      columns: [table.elevationRequestId, table.orgId],
+      foreignColumns: [elevationRequests.id, elevationRequests.orgId],
+      name: 'elevation_audit_elevation_request_id_org_id_fkey',
+    }).onDelete('cascade'),
   }),
 );
 

@@ -187,7 +187,12 @@ CREATE TABLE IF NOT EXISTS elevation_audit (
 
   -- Denormalized org_id so the RLS policy is a Shape-1 direct check
   -- (no JOIN through elevation_requests). Same denormalization
-  -- pattern as incident_evidence / incident_actions.
+  -- pattern as incident_evidence / incident_actions. Tenant integrity
+  -- against elevation_requests.org_id is enforced by the composite FK
+  -- (elevation_request_id, org_id) → elevation_requests(id, org_id)
+  -- declared in the Constraints section below — mirrors the
+  -- users (org_id, partner_id) → organizations(id, partner_id) Shape-4
+  -- pattern (2026-04-11-users-rls.sql §7).
   org_id UUID NOT NULL REFERENCES organizations(id),
 
   -- The elevation_requests row this event belongs to.
@@ -195,7 +200,11 @@ CREATE TABLE IF NOT EXISTS elevation_audit (
   -- audit trail goes with it (the data has no meaning standalone).
   -- We don't expect parent rows to ever actually be deleted, but the
   -- FK shape matches incident_evidence → incidents.
-  elevation_request_id UUID NOT NULL REFERENCES elevation_requests(id) ON DELETE CASCADE,
+  -- Note: the FK is added as a composite FK on (id, org_id) below; the
+  -- single-column reference here is dropped and replaced by the
+  -- composite constraint so denormalized org_id stays tied to the
+  -- parent row's org_id at DB level.
+  elevation_request_id UUID NOT NULL,
 
   event_type elevation_audit_event_type NOT NULL,
   actor elevation_audit_actor NOT NULL,
@@ -243,8 +252,10 @@ ALTER TABLE elevation_requests
   );
 
 -- Terminal-state coherence: approved/auto_approved require approved_at;
--- denied requires denial reason fields; revoked requires revoked_at.
--- expired requires expired_at. (status=pending leaves all NULL.)
+-- denied requires denial_reason (denied_by_user_id stays nullable so
+-- policy-driven denials with actor='policy' can record denial_reason
+-- 'policy: <name>' without an acting user); revoked requires
+-- revoked_at; expired requires expired_at. (status=pending leaves all NULL.)
 ALTER TABLE elevation_requests
   DROP CONSTRAINT IF EXISTS elevation_requests_status_timestamps_chk;
 ALTER TABLE elevation_requests
@@ -252,10 +263,36 @@ ALTER TABLE elevation_requests
   CHECK (
     (status = 'pending')
     OR (status IN ('approved', 'auto_approved') AND approved_at IS NOT NULL)
-    OR (status = 'denied' AND denied_by_user_id IS NOT NULL)
+    OR (status = 'denied' AND denial_reason IS NOT NULL)
     OR (status = 'expired' AND expired_at IS NOT NULL)
     OR (status = 'revoked' AND revoked_at IS NOT NULL)
   );
+
+-- Composite-FK target: unique on (id, org_id) so elevation_audit can
+-- reference it. `id` is already PK (unique by itself) so this adds no
+-- new tenancy invariant — it just declares the tuple the composite FK
+-- can reference. Mirrors organizations_id_partner_uq (2026-04-11-users-rls.sql §3).
+ALTER TABLE elevation_requests
+  DROP CONSTRAINT IF EXISTS elevation_requests_id_org_id_key;
+ALTER TABLE elevation_requests
+  ADD CONSTRAINT elevation_requests_id_org_id_key UNIQUE (id, org_id);
+
+-- Composite FK: (elevation_audit.elevation_request_id, elevation_audit.org_id)
+-- → elevation_requests(id, org_id). Structural guarantee that the
+-- denormalized org_id on each audit row matches the parent request's
+-- org_id at DB level, so an audit row can never be filed under the
+-- wrong tenant even if application code is buggy. Mirrors the
+-- users_org_partner_fk Shape-4 pattern (2026-04-11-users-rls.sql §7).
+-- ON DELETE CASCADE preserves the original single-column FK semantics.
+ALTER TABLE elevation_audit
+  DROP CONSTRAINT IF EXISTS elevation_audit_elevation_request_id_fkey;
+ALTER TABLE elevation_audit
+  DROP CONSTRAINT IF EXISTS elevation_audit_elevation_request_id_org_id_fkey;
+ALTER TABLE elevation_audit
+  ADD CONSTRAINT elevation_audit_elevation_request_id_org_id_fkey
+  FOREIGN KEY (elevation_request_id, org_id)
+  REFERENCES elevation_requests(id, org_id)
+  ON DELETE CASCADE;
 
 -- ============================================================
 -- Indexes
