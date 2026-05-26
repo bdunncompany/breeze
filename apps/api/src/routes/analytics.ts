@@ -1256,11 +1256,13 @@ analyticsRoutes.get(
       let total = 0;
       let online = 0;
       let offline = 0;
+      let pending = 0;
       for (const row of statusCounts) {
         const n = Number(row.count);
         total += n;
         if (row.status === 'online') online = n;
         if (row.status === 'offline' || row.status === 'maintenance') offline += n;
+        if (row.status === 'pending') pending = n;
       }
 
       // Weekly enrollment trend (last 12 weeks)
@@ -1286,10 +1288,11 @@ analyticsRoutes.get(
       return c.json({
         data: {
           periodType: query.periodType ?? 'monthly',
-          devices: { total, online, offline },
+          devices: { total, online, offline, pending },
           totalDevices: total,
           onlineDevices: online,
           offlineDevices: offline,
+          pendingDevices: pending,
           trendData,
           trendLabel: 'Weekly enrollments',
           highlights: [],
@@ -1299,10 +1302,11 @@ analyticsRoutes.get(
     } catch {
       return c.json({
         data: {
-          devices: { total: 0, online: 0, offline: 0 },
+          devices: { total: 0, online: 0, offline: 0, pending: 0 },
           totalDevices: 0,
           onlineDevices: 0,
           offlineDevices: 0,
+          pendingDevices: 0,
           trendData: [],
           highlights: [],
           metrics: [],

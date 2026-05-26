@@ -18,7 +18,7 @@ const DEFAULT_FILTER_FIELDS: FilterFieldDefinition[] = [
   // Core device fields
   { key: 'hostname', label: 'Hostname', category: 'core', type: 'string', operators: ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'matches'] },
   { key: 'displayName', label: 'Display Name', category: 'core', type: 'string', operators: ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'isNull', 'isNotNull'] },
-  { key: 'status', label: 'Status', category: 'core', type: 'enum', operators: ['equals', 'notEquals', 'in', 'notIn'], enumValues: ['online', 'offline', 'maintenance', 'decommissioned'] },
+  { key: 'status', label: 'Status', category: 'core', type: 'enum', operators: ['equals', 'notEquals', 'in', 'notIn'], enumValues: ['online', 'offline', 'maintenance', 'decommissioned', 'pending'] },
   { key: 'agentVersion', label: 'Agent Version', category: 'core', type: 'string', operators: ['equals', 'notEquals', 'contains', 'startsWith', 'greaterThan', 'lessThan'] },
   { key: 'enrolledAt', label: 'Enrolled Date', category: 'core', type: 'datetime', operators: ['before', 'after', 'between', 'withinLast', 'notWithinLast'] },
   { key: 'lastSeenAt', label: 'Last Seen', category: 'core', type: 'datetime', operators: ['before', 'after', 'between', 'withinLast', 'notWithinLast', 'isNull', 'isNotNull'] },

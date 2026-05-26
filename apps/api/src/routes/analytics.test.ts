@@ -348,7 +348,7 @@ describe('analytics routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.data.periodType).toBe('monthly');
-      expect(body.data.devices).toEqual({ total: 3, online: 2, offline: 1 });
+      expect(body.data.devices).toEqual({ total: 3, online: 2, offline: 1, pending: 0 });
       expect(body.data.highlights).toEqual([]);
     });
   });

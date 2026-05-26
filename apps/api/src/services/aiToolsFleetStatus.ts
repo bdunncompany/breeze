@@ -25,6 +25,7 @@ export interface InviteFunnel {
   invites_clicked: number;
   devices_enrolled: number;
   devices_online: number;
+  devices_pending: number;
   recent_enrollments: Array<{
     device_id: string;
     hostname: string;
@@ -91,6 +92,7 @@ export async function computeInviteFunnel(partnerId: string): Promise<InviteFunn
 
   const byDeviceId = new Map(deviceRows.map((d) => [d.id, d] as const));
   const devices_online = deviceRows.filter((d) => d.status === 'online').length;
+  const devices_pending = deviceRows.filter((d) => d.status === 'pending').length;
 
   const recent_enrollments = enrolledWithDevice
     .filter((i) => i.enrolledAt !== null)
@@ -112,6 +114,7 @@ export async function computeInviteFunnel(partnerId: string): Promise<InviteFunn
     invites_clicked,
     devices_enrolled,
     devices_online,
+    devices_pending,
     recent_enrollments,
   };
 }

@@ -368,6 +368,7 @@ dataRoutes.get(
     const onlineCount = byStatus.find(s => s.status === 'online')?.count ?? 0;
     const offlineCount = byStatus.find(s => s.status === 'offline')?.count ?? 0;
     const maintenanceCount = byStatus.find(s => s.status === 'maintenance')?.count ?? 0;
+    const pendingCount = byStatus.find(s => s.status === 'pending')?.count ?? 0;
 
     // Get devices not seen in last 7 days (stale devices)
     const sevenDaysAgo = new Date();
@@ -411,7 +412,9 @@ dataRoutes.get(
       }
     }
 
-    const complianceScore = total > 0 ? Math.round(((Number(onlineCount) + Number(maintenanceCount)) / total) * 100) : 100;
+    // Exclude pending (admin pre-created, not yet enrolled) from compliance denominator
+    const enrolledTotal = total - Number(pendingCount);
+    const complianceScore = enrolledTotal > 0 ? Math.round(((Number(onlineCount) + Number(maintenanceCount)) / enrolledTotal) * 100) : 100;
 
     return c.json({
       data: {
@@ -420,6 +423,7 @@ dataRoutes.get(
           onlineDevices: Number(onlineCount),
           offlineDevices: Number(offlineCount),
           maintenanceDevices: Number(maintenanceCount),
+          pendingDevices: Number(pendingCount),
           staleDevices: staleCount,
           complianceScore
         },

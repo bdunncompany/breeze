@@ -60,7 +60,7 @@ export const listDevicesSchema = z.object({
   siteIds: csvUuidList,
   groupIds: csvUuidList,
 
-  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating']).optional(),
+  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating', 'pending']).optional(),
   includeDecommissioned: boolStr,
   osType: z.enum(['windows', 'macos', 'linux']).optional(),
   role: z.enum(DEVICE_ROLES).optional(),
@@ -78,6 +78,17 @@ export const updateDeviceSchema = z.object({
     z.union([z.string().max(10000), z.number(), z.boolean(), z.null()])
   ).optional(),
   deviceRole: z.enum(DEVICE_ROLES).optional()
+});
+
+// POST /devices/provision — admin pre-creates a device row + downloadable
+// agent config so the agent never has to call /agents/enroll. orgId+siteId
+// come from the admin's input (not from an enrollment key).
+export const provisionDeviceSchema = z.object({
+  orgId: z.string().uuid(),
+  siteId: z.string().uuid(),
+  hostname: z.string().min(1).max(255),
+  osType: z.enum(['windows', 'macos', 'linux']),
+  displayName: z.string().max(255).optional(),
 });
 
 export const metricsQuerySchema = z.object({
