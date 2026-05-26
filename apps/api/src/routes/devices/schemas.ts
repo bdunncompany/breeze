@@ -60,7 +60,7 @@ export const listDevicesSchema = z.object({
   siteIds: csvUuidList,
   groupIds: csvUuidList,
 
-  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating']).optional(),
+  status: z.enum(['online', 'offline', 'maintenance', 'decommissioned', 'updating', 'pending']).optional(),
   includeDecommissioned: boolStr,
   osType: z.enum(['windows', 'macos', 'linux']).optional(),
   role: z.enum(DEVICE_ROLES).optional(),

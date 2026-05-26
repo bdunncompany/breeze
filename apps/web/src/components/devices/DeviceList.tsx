@@ -12,7 +12,7 @@ import {
   writePageSizePreference,
 } from './pageSizePreference';
 
-export type DeviceStatus = 'online' | 'offline' | 'maintenance' | 'decommissioned' | 'quarantined' | 'updating';
+export type DeviceStatus = 'online' | 'offline' | 'maintenance' | 'decommissioned' | 'quarantined' | 'updating' | 'pending';
 export type OSType = 'windows' | 'macos' | 'linux';
 
 export type Device = {
@@ -81,7 +81,8 @@ const statusColors: Record<DeviceStatus, string> = {
   maintenance: 'bg-warning/15 text-warning border-warning/30',
   decommissioned: 'bg-muted text-muted-foreground border-border',
   quarantined: 'bg-warning/15 text-warning border-warning/30',
-  updating: 'bg-info/15 text-info border-info/30'
+  updating: 'bg-info/15 text-info border-info/30',
+  pending: 'bg-muted text-muted-foreground border-border'
 };
 
 const statusLabels: Record<DeviceStatus, string> = {
@@ -90,7 +91,8 @@ const statusLabels: Record<DeviceStatus, string> = {
   maintenance: 'Maintenance',
   decommissioned: 'Decommissioned',
   quarantined: 'Quarantined',
-  updating: 'Updating'
+  updating: 'Updating',
+  pending: 'Pending'
 };
 
 /**

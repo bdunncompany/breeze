@@ -602,14 +602,18 @@ metricsRoutes.get('/', authMiddleware, requireScope('organization', 'partner', '
     let total = 0;
     let online = 0;
     let offline = 0;
+    let pending = 0;
     for (const row of statusCounts) {
       const n = Number(row.count);
       total += n;
       if (row.status === 'online') online = n;
       if (row.status === 'offline' || row.status === 'maintenance') offline += n;
+      if (row.status === 'pending') pending = n;
     }
 
-    const uptime = total > 0 ? Math.round((online / total) * 1000) / 10 : 0;
+    // Exclude pending (admin pre-created, not yet enrolled) from uptime denominator
+    const enrolledTotal = total - pending;
+    const uptime = enrolledTotal > 0 ? Math.round((online / enrolledTotal) * 1000) / 10 : 0;
 
     const activeSessionCondition = orgCondition
       ? and(eq(remoteSessions.status, 'active'), orgCondition)
@@ -637,10 +641,11 @@ metricsRoutes.get('/', authMiddleware, requireScope('organization', 'partner', '
         uptime,
         remoteSessions: activeSessions,
         sessions: totalSessions,
-        devices: { total, online, offline },
+        devices: { total, online, offline, pending },
         business_metrics: {
           devices_total: total,
-          devices_active: online
+          devices_active: online,
+          devices_pending: pending
         }
       }
     });
