@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  evaluatePamBridge,
   matchPathGlob,
   matchPoliciesAgainst,
   type LoadedPolicy,
@@ -56,6 +57,21 @@ describe('matchPathGlob', () => {
   it('does not match unrelated paths', () => {
     expect(matchPathGlob('C:\\Program Files\\Adobe\\**',
       'C:\\Windows\\System32\\cmd.exe')).toBe(false);
+  });
+
+  it('literal spaces in the glob match ONLY literal spaces (regression: NUL-sentinel fix)', () => {
+    // Pre-fix bug: ** was translated to a literal-space placeholder, then
+    // every space (including real `Program Files` spaces) was re-substituted
+    // to `.*`. A blocklist rule for `C:\Program Files\Evil.exe` would match
+    // attacker-controlled `c:/programXfilesY/evil.exe`.
+    expect(matchPathGlob('C:\\Program Files\\X.exe',
+      'C:\\ProgramQfilesQX.exe')).toBe(false);
+    expect(matchPathGlob('C:\\Program Files\\Evil.exe',
+      'c:/programXfilesY/evil.exe')).toBe(false);
+
+    // Positive case: literal-space match still works exactly.
+    expect(matchPathGlob('C:\\Program Files\\X.exe',
+      'C:\\Program Files\\X.exe')).toBe(true);
   });
 });
 
@@ -257,6 +273,18 @@ describe('matchPoliciesAgainst — empty / no-op inputs', () => {
       },
     };
     expect(matchPoliciesAgainst(adobeInstall, [inventoryOnlyPolicy]).match).toBeNull();
+  });
+});
+
+describe('evaluatePamBridge — RLS context guard', () => {
+  it('throws when called outside an active DB access context', async () => {
+    // No withDbAccessContext wrapper. The guard must fail loud rather
+    // than silently dropping to bare-pool RLS-deny → {match: null}.
+    await expect(evaluatePamBridge({
+      orgId: 'org-1',
+      deviceId: 'dev-1',
+      targetExecutablePath: 'C:\\Windows\\notepad.exe',
+    })).rejects.toThrow(/no active DB access context/);
   });
 });
 

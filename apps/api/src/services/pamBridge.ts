@@ -69,7 +69,7 @@
  */
 
 import { eq } from 'drizzle-orm';
-import { db, withDbAccessContext, type DbAccessContext } from '../db';
+import { db, hasDbAccessContext, withDbAccessContext, type DbAccessContext } from '../db';
 import {
   softwarePolicies,
   type SoftwarePolicyExecutableRule,
@@ -137,6 +137,16 @@ export interface PamBridgeVerdict {
 export async function evaluatePamBridge(
   input: PamBridgeInput
 ): Promise<PamBridgeVerdict> {
+  // RLS context guard. Without an active withDbAccessContext, the
+  // softwarePolicies query below would fall through to the bare pool
+  // (unprivileged `breeze_app`, no `breeze.scope` / `breeze.org_id` GUC),
+  // RLS would deny, and the bridge would silently return {match: null} —
+  // effectively skipping the blocklist auto-deny. Fail loud instead.
+  if (!hasDbAccessContext()) {
+    throw new Error(
+      'evaluatePamBridge: no active DB access context. Wrap the call in withDbAccessContext (request path) or evaluatePamBridgeWithContext / withSystemDbAccessContext (background path).'
+    );
+  }
   const policies = await loadActivePoliciesForDevice(input.deviceId);
   return matchPoliciesAgainst(input, policies);
 }
@@ -297,11 +307,17 @@ function matchRule(
 export function matchPathGlob(glob: string, path: string): boolean {
   const norm = (s: string) => s.replace(/\\/g, '/').toLowerCase();
   const target = norm(path);
+  // Use a NUL sentinel for `**` so a literal space in the glob (e.g. the
+  // `Program Files` segment of every Windows install path) can never be
+  // misinterpreted as the wildcard placeholder. A printable placeholder
+  // here is a security bug: a blocklist rule for `C:\Program Files\Evil.exe`
+  // would otherwise produce regex `^c:/program.*files/evil\.exe$` and match
+  // attacker-controlled non-default install paths like `c:/programXfilesY/`.
   const escaped = norm(glob)
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, ' ')   // placeholder for greedy any
-    .replace(/\*/g, '[^/]*')
-    .replace(/ /g, '.*');
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')   // escape regex metas (space NOT included — good)
+    .replace(/\*\*/g, '\x00')                  // ** → NUL sentinel
+    .replace(/\*/g, '[^/]*')                   // * → single-segment wildcard
+    .replace(/\x00/g, '.*');                   // sentinel → real .*
   const re = new RegExp(`^${escaped}$`);
   return re.test(target);
 }
