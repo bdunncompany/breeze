@@ -58,8 +58,8 @@ describe('orgStore — orgScope global toggle', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
     );
-    // fetchWithAuth requires a token; stub to make the call go through.
-    auth.useAuthStore.setState({ token: 't', user: { id: 'u', email: 'e', partnerId: 'p', firstName: 'F', lastName: 'L' } as any, mfaSatisfied: true });
+    // fetchWithAuth requires an access token; stub to make the call go through.
+    auth.useAuthStore.setState({ tokens: { accessToken: 't', expiresAt: Date.now() + 60_000 } as any, user: { id: 'u', email: 'e' } as any, isAuthenticated: true });
 
     await auth.fetchWithAuth('/devices');
     const calledUrl = fetchSpy.mock.calls[0]?.[0] as string;
@@ -76,7 +76,7 @@ describe('orgStore — orgScope global toggle', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
     );
-    auth.useAuthStore.setState({ token: 't', user: { id: 'u', email: 'e', partnerId: 'p', firstName: 'F', lastName: 'L' } as any, mfaSatisfied: true });
+    auth.useAuthStore.setState({ tokens: { accessToken: 't', expiresAt: Date.now() + 60_000 } as any, user: { id: 'u', email: 'e' } as any, isAuthenticated: true });
 
     await auth.fetchWithAuth('/devices');
     const calledUrl = fetchSpy.mock.calls[0]?.[0] as string;
