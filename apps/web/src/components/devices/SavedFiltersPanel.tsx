@@ -6,8 +6,8 @@
 // Renders as a small button so it doesn't consume vertical space when closed.
 // Earlier left-column layout pushed the device list below the fold whenever
 // the user accumulated more than a few filters.
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookmarkIcon, Save, ChevronDown } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BookmarkIcon, Save, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import type { FilterConditionGroup, SavedFilter } from '@breeze/shared';
 import { fetchWithAuth } from '../../stores/auth';
 
@@ -72,6 +72,53 @@ export function SavedFiltersPanel({ currentFilter, onApply, saveTrigger }: Saved
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // Display order: alphabetical by name (case-insensitive). Server returns
+  // newest-first; for picking a filter from a list, by-name is much more useful.
+  const sortedFilters = useMemo(
+    () =>
+      [...filters].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+      ),
+    [filters]
+  );
+
+  const handleRename = useCallback(async (filter: SavedFilter) => {
+    const nextName = window.prompt('New name:', filter.name);
+    if (!nextName || nextName.trim() === filter.name) return;
+    setError(null);
+    try {
+      const res = await fetchWithAuth(`/filters/${filter.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: nextName.trim() })
+      });
+      if (res.ok) {
+        await refresh();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? `Rename failed (${res.status})`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Rename failed');
+    }
+  }, [refresh]);
+
+  const handleDelete = useCallback(async (filter: SavedFilter) => {
+    if (!window.confirm(`Delete "${filter.name}"?`)) return;
+    setError(null);
+    try {
+      const res = await fetchWithAuth(`/filters/${filter.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        await refresh();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? `Delete failed (${res.status})`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }, [refresh]);
 
   const handleSave = useCallback(async () => {
     if (!currentFilter || countChips(currentFilter) === 0) return;
@@ -159,11 +206,11 @@ export function SavedFiltersPanel({ currentFilter, onApply, saveTrigger }: Saved
             </div>
           )}
           {!loading && filters.length > 0 && (
-            <ul className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto">
-              {filters.map(f => {
+            <ul className="flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto">
+              {sortedFilters.map(f => {
                 const chipCount = countChips(f.conditions as FilterConditionGroup);
                 return (
-                  <li key={f.id}>
+                  <li key={f.id} className="group flex items-center gap-1 rounded hover:bg-muted">
                     <button
                       type="button"
                       data-testid={`saved-filter-apply-${f.id}`}
@@ -171,12 +218,32 @@ export function SavedFiltersPanel({ currentFilter, onApply, saveTrigger }: Saved
                         onApply(f.conditions as FilterConditionGroup);
                         setOpen(false);
                       }}
-                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-muted"
+                      className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-1 text-left text-sm"
                     >
                       <span className="truncate">{f.name}</span>
-                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground group-hover:bg-background">
                         {chipCount}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`saved-filter-rename-${f.id}`}
+                      onClick={(e) => { e.stopPropagation(); void handleRename(f); }}
+                      className="shrink-0 rounded p-1 opacity-0 transition hover:bg-background group-hover:opacity-100 focus:opacity-100"
+                      title="Rename"
+                      aria-label={`Rename ${f.name}`}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`saved-filter-delete-${f.id}`}
+                      onClick={(e) => { e.stopPropagation(); void handleDelete(f); }}
+                      className="shrink-0 rounded p-1 opacity-0 transition hover:bg-background hover:text-destructive group-hover:opacity-100 focus:opacity-100"
+                      title="Delete"
+                      aria-label={`Delete ${f.name}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
                     </button>
                   </li>
                 );
