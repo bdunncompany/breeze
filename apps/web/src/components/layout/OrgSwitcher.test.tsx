@@ -3,28 +3,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import OrgSwitcher, { getOrgSwitchRedirect } from './OrgSwitcher';
 
-const setOrganizationMock = vi.fn();
-const setSiteMock = vi.fn();
-const fetchOrganizationsMock = vi.fn();
-const fetchSitesMock = vi.fn();
+const {
+  setOrganizationMock,
+  setSiteMock,
+  setOrgScopeMock,
+  fetchOrganizationsMock,
+  fetchSitesMock,
+  mockStoreRef,
+} = vi.hoisted(() => ({
+  setOrganizationMock: vi.fn(),
+  setSiteMock: vi.fn(),
+  setOrgScopeMock: vi.fn(),
+  fetchOrganizationsMock: vi.fn(),
+  fetchSitesMock: vi.fn(),
+  mockStoreRef: { current: null as any },
+}));
 
 let mockStoreState: {
   currentOrgId: string | null;
   currentSiteId: string | null;
+  orgScope: 'current' | 'all';
   organizations: Array<{ id: string; partnerId: string; name: string; status: string; createdAt: string }>;
   sites: Array<{ id: string; orgId: string; name: string; deviceCount: number; createdAt: string }>;
   isLoading: boolean;
 };
 
-vi.mock('@/stores/orgStore', () => ({
-  useOrgStore: () => ({
-    ...mockStoreState,
+vi.mock('@/stores/orgStore', () => {
+  const buildStoreSnapshot = () => ({
+    ...mockStoreRef.current,
     setOrganization: setOrganizationMock,
     setSite: setSiteMock,
+    setOrgScope: setOrgScopeMock,
     fetchOrganizations: fetchOrganizationsMock,
-    fetchSites: fetchSitesMock
-  })
-}));
+    fetchSites: fetchSitesMock,
+  });
+  const useOrgStore = vi.fn((selector?: (state: ReturnType<typeof buildStoreSnapshot>) => unknown) => {
+    const snap = buildStoreSnapshot();
+    return selector ? selector(snap) : snap;
+  });
+  (useOrgStore as unknown as { getState: () => ReturnType<typeof buildStoreSnapshot> }).getState = () => buildStoreSnapshot();
+  return { useOrgStore };
+});
 
 describe('getOrgSwitchRedirect', () => {
   it('redirects /devices/:id to /devices', () => {
@@ -56,12 +75,14 @@ describe('OrgSwitcher org change navigation', () => {
   beforeEach(() => {
     setOrganizationMock.mockReset();
     setSiteMock.mockReset();
+    setOrgScopeMock.mockReset();
     fetchOrganizationsMock.mockReset();
     fetchSitesMock.mockReset();
 
     mockStoreState = {
       currentOrgId: 'org-a',
       currentSiteId: null,
+      orgScope: 'current',
       organizations: [
         { id: 'org-a', partnerId: 'p1', name: 'Org A', status: 'active', createdAt: '2024-01-01' },
         { id: 'org-b', partnerId: 'p1', name: 'Org B', status: 'active', createdAt: '2024-01-01' }
@@ -69,6 +90,7 @@ describe('OrgSwitcher org change navigation', () => {
       sites: [],
       isLoading: false
     };
+    mockStoreRef.current = mockStoreState;
   });
 
   function stubLocation(pathname: string) {
@@ -101,9 +123,10 @@ describe('OrgSwitcher org change navigation', () => {
   });
 
   function openDropdownAndClickOrg(orgName: string) {
-    // Toggle the trigger button (first button on the page) to open the dropdown,
-    // then click the menu item that matches the org name.
-    const triggerButton = screen.getAllByRole('button')[0];
+    // The OrgScopePill renders two buttons BEFORE the org-picker trigger when
+    // multiple orgs are accessible, so target the trigger explicitly by
+    // data-testid rather than relying on DOM order.
+    const triggerButton = screen.getByTestId('org-switcher-trigger');
     fireEvent.click(triggerButton);
     const orgButtons = screen
       .getAllByRole('button')

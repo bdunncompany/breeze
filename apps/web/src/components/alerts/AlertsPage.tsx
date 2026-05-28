@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Building2, CheckCircle, Globe, Settings2 } from 'lucide-react';
+import { CheckCircle, Settings2 } from 'lucide-react';
 import AlertList, { type Alert } from './AlertList';
 import AlertDetails, { type StatusChange, type NotificationHistory } from './AlertDetails';
 import AlertsSummary from './AlertsSummary';
@@ -30,42 +30,16 @@ export default function AlertsPage() {
   const [deviceFilterIds, setDeviceFilterIds] = useState<Set<string> | null>(null);
   const [pendingBulk, setPendingBulk] = useState<{ action: string; alerts: Alert[] } | null>(null);
 
-  const { currentOrgId, organizations } = useOrgStore();
-
-  // Org scope toggle: 'current' narrows the list to currentOrgId, 'all' shows
-  // every alert the caller's auth scope grants access to. URL-hash synced so
-  // the choice survives reload and is shareable. Default is 'current' so the
-  // org switcher's selection visibly narrows the list (matches DevicesPage).
-  const [orgScope, setOrgScope] = useState<'current' | 'all'>(() => {
-    if (typeof window === 'undefined') return 'current';
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    return params.get('scope') === 'all' ? 'all' : 'current';
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    if (orgScope === 'all') {
-      params.set('scope', 'all');
-    } else {
-      params.delete('scope');
-    }
-    const next = params.toString();
-    const desired = next ? `#${next}` : '';
-    if (window.location.hash !== desired) {
-      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${desired}`);
-    }
-  }, [orgScope]);
+  // orgScope is read from the global store so the toggle next to the org
+  // picker controls every page. Per-page state + URL hash dropped; the new
+  // global toggle persists in localStorage and is the single source of truth.
+  const currentOrgId = useOrgStore((s) => s.currentOrgId);
+  const orgScope = useOrgStore((s) => s.orgScope);
 
   // When 'current' scope is active and we have a currentOrgId, lock the
   // list to that org by filtering at the page level. When 'all', leave it
   // unlocked so the user sees every accessible org. null = unlocked.
   const lockedOrgFilter: string | null = orgScope === 'current' ? currentOrgId : null;
-
-  const currentOrgName = useMemo(
-    () => organizations.find((o) => o.id === currentOrgId)?.name ?? 'Current org',
-    [organizations, currentOrgId]
-  );
 
   const fetchAlerts = useCallback(async () => {
     try {
@@ -402,42 +376,8 @@ export default function AlertsPage() {
             </a>.
           </p>
         </div>
-        <div
-          className="inline-flex rounded-md border self-start"
-          role="group"
-          aria-label="Organization scope"
-          data-testid="org-scope-toggle"
-        >
-          <button
-            type="button"
-            onClick={() => setOrgScope('current')}
-            disabled={!currentOrgId}
-            title={currentOrgId ? `Show only ${currentOrgName}` : 'No current organization selected'}
-            aria-pressed={orgScope === 'current'}
-            data-testid="org-scope-current"
-            className={`flex h-10 items-center gap-1.5 rounded-l-md px-3 text-xs font-medium transition ${
-              orgScope === 'current' ? 'bg-muted' : 'hover:bg-muted/50'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            <Building2 className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Current org</span>
-            <span className="sm:hidden">Org</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setOrgScope('all')}
-            title="Show every alert across all accessible organizations"
-            aria-pressed={orgScope === 'all'}
-            data-testid="org-scope-all"
-            className={`flex h-10 items-center gap-1.5 rounded-r-md border-l px-3 text-xs font-medium transition ${
-              orgScope === 'all' ? 'bg-muted' : 'hover:bg-muted/50'
-            }`}
-          >
-            <Globe className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">All orgs</span>
-            <span className="sm:hidden">All</span>
-          </button>
-        </div>
+        {/* Org-scope toggle lifted to the global header (next to the org
+            picker). AlertsPage just consumes orgScope from useOrgStore. */}
       </div>
 
       {error && (
