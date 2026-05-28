@@ -1,0 +1,73 @@
+name: Beta Bug — Trevor
+description: For Trevor's testing on the BDunn VPS. Stays on this fork only — never touches upstream.
+title: "[beta] "
+labels: ["beta-trevor", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Hey Trevor — this template files an internal bug on the BDunn fork. Billy and Claude both watch this list. Nothing here goes to the LanternOps upstream unless we explicitly tag it.
+
+        Keep it short. Screenshots beat paragraphs.
+
+  - type: input
+    id: page
+    attributes:
+      label: Page or feature
+      description: Where did you see it? URL is best, otherwise the page name (Devices, Alerts, Security Score, Settings → Users, etc.)
+      placeholder: e.g. https://breeze.bdunn.com/devices  OR  "Security Score detail"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: One or two sentences is fine. Drop a screenshot if it's easier.
+      placeholder: |
+        e.g. "Clicked the Offline chip and saw two systems that are clearly online."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Optional if it's already obvious from the screenshot.
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: Bullet list of clicks. Skip if it's already in the description.
+
+  - type: dropdown
+    id: how_blocking
+    attributes:
+      label: How blocking is it?
+      options:
+        - "Cosmetic — annoying but I can keep working"
+        - "Slows me down — there's a workaround"
+        - "Blocks the workflow I'm testing"
+        - "Production-impacting — Billy should look now"
+    validations:
+      required: true
+
+  - type: input
+    id: org_scope
+    attributes:
+      label: Which org / scope?
+      description: If relevant — which org you had selected in the picker, or "All orgs".
+      placeholder: e.g. "Current — Tucker"  OR  "All orgs"
+
+  - type: input
+    id: device_or_user
+    attributes:
+      label: Affected device / user (if any)
+      placeholder: e.g. "TUCKER-NUC133"  OR  "—"
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Anything else
+      description: Browser, agent version visible on the row, console errors, network-tab status codes if you grabbed them — anything that might help. Optional.
