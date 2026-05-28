@@ -695,7 +695,12 @@ export default function DevicesPage() {
     }
   };
 
-  if (loading) {
+  // Only show the full-page skeleton on the initial load. Subsequent fetches
+  // (triggered by advancedFilter changes for /devices/query) keep the existing
+  // rows + chip popovers mounted so in-place edits — like adding a second item
+  // to a software multi-select — don't reset their search box / open state.
+  // See feedback_loading_skeleton_unmounts_in_place_ui memory.
+  if (loading && devices.length === 0) {
     return (
       <div className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
