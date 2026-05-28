@@ -31,6 +31,12 @@ export interface FilterChipBarProps {
   // undefined the editor falls back to comma-separated text input.
   softwareOptions?: string[];
   softwareOptionCounts?: Record<string, number>;
+  // Threaded down to the software multi-select. The picker fires this on
+  // every keystroke; the owner (DevicesPage) debounces and refetches the
+  // distinct-name endpoint with `?search=...`. See
+  // 2026-05-28-software-inventory-name-trgm.sql for the GIN trigram index
+  // that makes the server-side search sub-ms at any fleet size.
+  onSoftwareSearchChange?: (query: string) => void;
   // Spec 4.12 — `Ctrl+S` invokes save. Parent owns saved-filter state, so
   // this callback is fired with the current group (parent prompts for name).
   onSaveRequested?: (group: FilterConditionGroup) => void;
@@ -52,7 +58,7 @@ function defaultConditionForField(field: FilterFieldDefinition): FilterCondition
 }
 
 export function FilterChipBar({
-  value, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSaveRequested, rightSlot
+  value, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange, onSaveRequested, rightSlot
 }: FilterChipBarProps) {
   const group = value ?? EMPTY_GROUP;
   const chips: FilterCondition[] = group.conditions.filter(
@@ -217,6 +223,7 @@ export function FilterChipBar({
               sites={sites}
               softwareOptions={softwareOptions}
               softwareOptionCounts={softwareOptionCounts}
+              onSoftwareSearchChange={onSoftwareSearchChange}
               btnRef={el => { chipBtnRefs.current[i] = el; }}
               onKeyDown={(e) => onChipKeyDown(e, i)}
               focused={focusedChipIdx === i}
@@ -242,6 +249,7 @@ export function FilterChipBar({
           sites={sites}
           softwareOptions={softwareOptions}
           softwareOptionCounts={softwareOptionCounts}
+          onSoftwareSearchChange={onSoftwareSearchChange}
           onSaveRequested={onSaveRequested}
         />
       )}
@@ -259,12 +267,13 @@ interface ChipProps {
   sites?: NamedRef[];
   softwareOptions?: string[];
   softwareOptionCounts?: Record<string, number>;
+  onSoftwareSearchChange?: (query: string) => void;
   btnRef?: (el: HTMLButtonElement | null) => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   focused?: boolean;
 }
 
-function Chip({ condition, onChange, onRemove, orgs, sites, softwareOptions, softwareOptionCounts, btnRef, onKeyDown, focused }: ChipProps) {
+function Chip({ condition, onChange, onRemove, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange, btnRef, onKeyDown, focused }: ChipProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const field = getFieldDef(condition.field)
@@ -338,6 +347,7 @@ function Chip({ condition, onChange, onRemove, orgs, sites, softwareOptions, sof
             sites={sites}
             softwareOptions={softwareOptions}
             softwareOptionCounts={softwareOptionCounts}
+            onSoftwareSearchChange={onSoftwareSearchChange}
           />
           <div className="mt-3 flex items-center justify-between gap-2">
             <FilterPreviewFooter group={previewGroup} />

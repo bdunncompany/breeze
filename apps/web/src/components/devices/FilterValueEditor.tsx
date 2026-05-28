@@ -40,6 +40,14 @@ export interface FilterValueEditorProps {
   softwareOptions?: string[];
   // Optional per-name device counts to surface in the picker list.
   softwareOptionCounts?: Record<string, number>;
+  // When provided, the picker delegates search to the parent: as the user
+  // types in the search box, parent debounces and refetches the distinct
+  // list with `?search=...`. Without this, the picker falls back to local
+  // substring filter over whatever `softwareOptions` it was handed — which
+  // only finds matches inside the initial bulk fetch (alphabetical first N).
+  // See migration 2026-05-28-software-inventory-name-trgm.sql for the
+  // server-side index that makes server-search sub-ms at any fleet size.
+  onSoftwareSearchChange?: (query: string) => void;
 }
 
 function defaultValueForOp(field: FilterFieldDefinition, op: FilterOperator): FilterValue {
@@ -59,7 +67,7 @@ function isOrgField(key: string): boolean { return key === 'orgId'; }
 function isSiteField(key: string): boolean { return key === 'siteId'; }
 
 export function FilterValueEditor({
-  field, condition, onChange, orgs, sites, softwareOptions, softwareOptionCounts
+  field, condition, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange
 }: FilterValueEditorProps) {
   const op = condition.operator;
 
@@ -114,6 +122,7 @@ export function FilterValueEditor({
         onChange={onChange}
         options={softwareOptions}
         optionCounts={softwareOptionCounts}
+        onSearchChange={onSoftwareSearchChange}
       />
     );
   }
@@ -361,8 +370,14 @@ interface SoftwareMultiSelectProps {
   onChange: (c: FilterCondition) => void;
   options?: string[];
   optionCounts?: Record<string, number>;
+  // When provided, the picker delegates substring filtering to the parent
+  // (which debounces and refetches the distinct endpoint with `?search=q`).
+  // The local useMemo still applies as a defensive no-op when the parent's
+  // response is in flight or out of sync, but the load-bearing match is
+  // server-side.
+  onSearchChange?: (query: string) => void;
 }
-function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts }: SoftwareMultiSelectProps) {
+function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts, onSearchChange }: SoftwareMultiSelectProps) {
   const [q, setQ] = useState('');
   const selected: string[] = Array.isArray(condition.value)
     ? (condition.value as string[])
@@ -378,9 +393,18 @@ function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts
     const op: FilterOperator = condition.operator === 'hasAll' ? 'hasAll' : 'hasAny';
     onChange({ ...condition, operator: op, value: nextSel });
   };
+  const handleSearchInput = (next: string) => {
+    setQ(next);
+    onSearchChange?.(next);
+  };
   const filtered = useMemo(() => {
     const lc = q.toLowerCase().trim();
     if (!options) return [] as string[];
+    // When the parent is doing the server-side search, `options` is already
+    // the result of `?search=q`, so the local filter is a no-op (every row
+    // contains `q` by construction). When no parent search is wired,
+    // the local filter is the only thing constraining the list — kept for
+    // backwards compatibility with callers that haven't migrated.
     return lc ? options.filter(o => o.toLowerCase().includes(lc)).slice(0, 50) : options.slice(0, 50);
   }, [q, options]);
   const noBackend = !options;
@@ -441,7 +465,7 @@ function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts
             <input
               type="text"
               value={q}
-              onChange={e => setQ(e.target.value)}
+              onChange={e => handleSearchInput(e.target.value)}
               placeholder="Search software…"
               data-testid="filter-software-search"
               className="flex-1 bg-transparent text-xs outline-none"
