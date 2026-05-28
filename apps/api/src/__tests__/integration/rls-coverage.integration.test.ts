@@ -143,6 +143,10 @@ const USER_ID_SCOPED_TABLES: ReadonlySet<string> = new Set<string>([
   // the same system-scope OR branch so the account-deletion admin queue
   // (runWithSystemDbAccess) can read/process the queue.
   'account_deletion_requests',
+  // saved_filter_stars: per-user starring of saved filters. Shape 6 policy —
+  // each user can only see and mutate their own star rows. From the
+  // 2026-05-27-saved-filters-scope-and-folders migration.
+  'saved_filter_stars',
 ]);
 
 const REQUIRED_CMDS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as const;

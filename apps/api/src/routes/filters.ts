@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, type SQL } from 'drizzle-orm';
 import { db } from '../db';
-import { savedFilters } from '../db/schema';
+import { savedFilters, savedFilterFolders, savedFilterStars } from '../db/schema';
 import { authMiddleware, requireMfa, requirePermission, requireScope, type AuthContext } from '../middleware/auth';
 import { evaluateFilterWithPreview, FilterConditionGroup } from '../services/filterEngine';
 import { writeRouteAudit } from '../services/auditEvents';
@@ -14,6 +14,8 @@ import {
   updateSavedFilterSchema,
   savedFilterQuerySchema
 } from '@breeze/shared/validators/filters';
+
+const savedFilterScopeSchema = z.enum(['private', 'org', 'partner']);
 
 export const filterRoutes = new Hono();
 const requireFilterRead = requirePermission(PERMISSIONS.DEVICES_READ.resource, PERMISSIONS.DEVICES_READ.action);
@@ -28,6 +30,12 @@ type SavedFilterResponse = {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  scope: 'private' | 'org' | 'partner';
+  folderId: string | null;
+  lastUsedAt: string | null;
+  useCount: number;
+  icon: string | null;
+  color: string | null;
 };
 
 const filterIdParamSchema = z.object({
@@ -35,6 +43,36 @@ const filterIdParamSchema = z.object({
 });
 
 const createFilterSchema = createSavedFilterSchema.extend({
+  orgId: z.string().uuid().optional(),
+  scope: savedFilterScopeSchema.optional(),
+  folderId: z.string().uuid().nullable().optional(),
+  icon: z.string().max(50).nullable().optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, 'color must be a 6-digit hex')
+    .nullable()
+    .optional()
+});
+
+const updateFilterExtendedSchema = updateSavedFilterSchema.extend({
+  scope: savedFilterScopeSchema.optional(),
+  folderId: z.string().uuid().nullable().optional(),
+  icon: z.string().max(50).nullable().optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, 'color must be a 6-digit hex')
+    .nullable()
+    .optional()
+});
+
+const folderIdParamSchema = z.object({
+  id: z.string().uuid()
+});
+
+const createFolderSchema = z.object({
+  name: z.string().min(1).max(200),
+  parentId: z.string().uuid().nullable().optional(),
+  sortOrder: z.number().int().optional(),
   orgId: z.string().uuid().optional()
 });
 
@@ -105,7 +143,13 @@ function mapFilterRow(filter: typeof savedFilters.$inferSelect): SavedFilterResp
     conditions: filter.conditions,
     createdBy: filter.createdBy ?? null,
     createdAt: filter.createdAt.toISOString(),
-    updatedAt: filter.updatedAt.toISOString()
+    updatedAt: filter.updatedAt.toISOString(),
+    scope: filter.scope ?? 'private',
+    folderId: filter.folderId ?? null,
+    lastUsedAt: filter.lastUsedAt ? filter.lastUsedAt.toISOString() : null,
+    useCount: filter.useCount ?? 0,
+    icon: filter.icon ?? null,
+    color: filter.color ?? null
   };
 }
 
@@ -176,7 +220,10 @@ filterRoutes.get(
   '/',
   requireScope('organization', 'partner', 'system'),
   requireFilterRead,
-  zValidator('query', savedFilterQuerySchema.pick({ search: true })),
+  zValidator('query', savedFilterQuerySchema.pick({ search: true }).extend({
+    scope: savedFilterScopeSchema.optional(),
+    folderId: z.string().uuid().nullable().optional()
+  })),
   async (c) => {
     const auth = c.get('auth');
     const query = c.req.valid('query');
@@ -186,9 +233,17 @@ filterRoutes.get(
       return c.json({ data: [], total: 0 });
     }
 
-    const conditions = [] as ReturnType<typeof eq>[];
+    const conditions: SQL[] = [];
     if (orgIds) {
       conditions.push(inArray(savedFilters.orgId, orgIds));
+    }
+    if (query.scope) {
+      conditions.push(eq(savedFilters.scope, query.scope));
+    }
+    if (query.folderId !== undefined) {
+      conditions.push(query.folderId === null
+        ? isNull(savedFilters.folderId)
+        : eq(savedFilters.folderId, query.folderId));
     }
 
     const whereCondition = conditions.length ? and(...conditions) : undefined;
@@ -256,7 +311,11 @@ filterRoutes.post(
         name: payload.name,
         description: payload.description ?? null,
         conditions: payload.conditions,
-        createdBy: auth.user.id
+        createdBy: auth.user.id,
+        scope: payload.scope ?? 'private',
+        folderId: payload.folderId ?? null,
+        icon: payload.icon ?? null,
+        color: payload.color ?? null
       })
       .returning();
 
@@ -273,6 +332,223 @@ filterRoutes.post(
     });
 
     return c.json({ data: mapFilterRow(filter) }, 201);
+  }
+);
+
+// ============================================
+// Folder CRUD (spec §3.2 - savedFilterFolders)
+// MUST be registered BEFORE /:id routes so /folders is not matched as an id.
+// ============================================
+
+type SavedFilterFolderResponse = {
+  id: string;
+  orgId: string;
+  name: string;
+  parentId: string | null;
+  sortOrder: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function mapFolderRow(row: typeof savedFilterFolders.$inferSelect): SavedFilterFolderResponse {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    name: row.name,
+    parentId: row.parentId ?? null,
+    sortOrder: row.sortOrder,
+    createdBy: row.createdBy ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString()
+  };
+}
+
+// GET /folders - List folders visible to the caller
+filterRoutes.get(
+  '/folders',
+  requireScope('organization', 'partner', 'system'),
+  requireFilterRead,
+  async (c) => {
+    const auth = c.get('auth');
+
+    const orgIds = await getOrgIdsForAuth(auth);
+    if (auth.scope !== 'system' && (!orgIds || orgIds.length === 0)) {
+      return c.json({ data: [], total: 0 });
+    }
+
+    const where = orgIds
+      ? inArray(savedFilterFolders.orgId, orgIds)
+      : undefined;
+
+    const rows = await db
+      .select()
+      .from(savedFilterFolders)
+      .where(where)
+      .orderBy(desc(savedFilterFolders.createdAt));
+
+    return c.json({ data: rows.map(mapFolderRow), total: rows.length });
+  }
+);
+
+// POST /folders - Create a folder
+filterRoutes.post(
+  '/folders',
+  requireScope('organization', 'partner', 'system'),
+  requireFilterWrite,
+  requireMfa(),
+  zValidator('json', createFolderSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const payload = c.req.valid('json');
+
+    let orgId = payload.orgId;
+    if (auth.scope === 'organization') {
+      if (!auth.orgId) {
+        return c.json({ error: 'Organization context required' }, 403);
+      }
+      orgId = auth.orgId;
+    } else if (auth.scope === 'partner') {
+      if (!orgId) {
+        const singleOrg = auth.accessibleOrgIds?.[0];
+        if (auth.accessibleOrgIds?.length === 1 && singleOrg) {
+          orgId = singleOrg;
+        } else {
+          return c.json({ error: 'orgId is required when partner has multiple organizations' }, 400);
+        }
+      }
+      const hasAccess = await ensureOrgAccess(orgId, auth);
+      if (!hasAccess) {
+        return c.json({ error: 'Access to this organization denied' }, 403);
+      }
+    } else if (auth.scope === 'system' && !orgId) {
+      return c.json({ error: 'orgId is required' }, 400);
+    }
+
+    // Enforce one-level nesting: parent must have parentId IS NULL.
+    if (payload.parentId) {
+      const [parent] = await db
+        .select()
+        .from(savedFilterFolders)
+        .where(eq(savedFilterFolders.id, payload.parentId))
+        .limit(1);
+      if (!parent) {
+        return c.json({ error: 'Parent folder not found' }, 404);
+      }
+      if (parent.parentId !== null) {
+        return c.json({ error: 'Folders can be nested at most one level deep' }, 400);
+      }
+    }
+
+    const [folder] = await db
+      .insert(savedFilterFolders)
+      .values({
+        orgId: orgId!,
+        name: payload.name,
+        parentId: payload.parentId ?? null,
+        sortOrder: payload.sortOrder ?? 0,
+        createdBy: auth.user.id
+      })
+      .returning();
+
+    if (!folder) {
+      return c.json({ error: 'Failed to create folder' }, 500);
+    }
+
+    writeRouteAudit(c, {
+      orgId: folder.orgId,
+      action: 'filter.folder.create',
+      resourceType: 'saved_filter_folder',
+      resourceId: folder.id,
+      resourceName: folder.name
+    });
+
+    return c.json({ data: mapFolderRow(folder) }, 201);
+  }
+);
+
+// DELETE /folders/:id - Delete a folder
+filterRoutes.delete(
+  '/folders/:id',
+  requireScope('organization', 'partner', 'system'),
+  requireFilterWrite,
+  requireMfa(),
+  zValidator('param', folderIdParamSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { id } = c.req.valid('param');
+
+    const [folder] = await db
+      .select()
+      .from(savedFilterFolders)
+      .where(eq(savedFilterFolders.id, id))
+      .limit(1);
+
+    if (!folder) {
+      return c.json({ error: 'Folder not found' }, 404);
+    }
+
+    const hasAccess = await ensureOrgAccess(folder.orgId, auth);
+    if (!hasAccess) {
+      return c.json({ error: 'Folder not found' }, 404);
+    }
+
+    await db.delete(savedFilterFolders).where(eq(savedFilterFolders.id, id));
+
+    writeRouteAudit(c, {
+      orgId: folder.orgId,
+      action: 'filter.folder.delete',
+      resourceType: 'saved_filter_folder',
+      resourceId: folder.id,
+      resourceName: folder.name
+    });
+
+    return c.json({ data: mapFolderRow(folder) });
+  }
+);
+
+// ============================================
+// Per-user stars (spec §3.2 - savedFilterStars)
+// MUST be registered BEFORE /:id PATCH/DELETE so :id/star isn't shadowed.
+// ============================================
+
+filterRoutes.post(
+  '/:id/star',
+  requireScope('organization', 'partner', 'system'),
+  requireFilterRead,
+  zValidator('param', filterIdParamSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { id } = c.req.valid('param');
+
+    const filter = await getFilterWithAccess(id, auth);
+    if (!filter) {
+      return c.json({ error: 'Saved filter not found' }, 404);
+    }
+
+    await db
+      .insert(savedFilterStars)
+      .values({ userId: auth.user.id, filterId: id })
+      .onConflictDoNothing();
+
+    return c.json({ data: { userId: auth.user.id, filterId: id, starred: true } });
+  }
+);
+
+filterRoutes.delete(
+  '/:id/star',
+  requireScope('organization', 'partner', 'system'),
+  requireFilterRead,
+  zValidator('param', filterIdParamSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { id } = c.req.valid('param');
+
+    await db
+      .delete(savedFilterStars)
+      .where(and(eq(savedFilterStars.userId, auth.user.id), eq(savedFilterStars.filterId, id)));
+
+    return c.json({ data: { userId: auth.user.id, filterId: id, starred: false } });
   }
 );
 
@@ -302,7 +578,7 @@ filterRoutes.patch(
   requireFilterWrite,
   requireMfa(),
   zValidator('param', filterIdParamSchema),
-  zValidator('json', updateSavedFilterSchema),
+  zValidator('json', updateFilterExtendedSchema),
   async (c) => {
     const auth = c.get('auth');
     const { id } = c.req.valid('param');
@@ -317,6 +593,10 @@ filterRoutes.patch(
     if (payload.name !== undefined) updates.name = payload.name;
     if (payload.description !== undefined) updates.description = payload.description;
     if (payload.conditions !== undefined) updates.conditions = payload.conditions;
+    if (payload.scope !== undefined) updates.scope = payload.scope;
+    if (payload.folderId !== undefined) updates.folderId = payload.folderId;
+    if (payload.icon !== undefined) updates.icon = payload.icon;
+    if (payload.color !== undefined) updates.color = payload.color;
 
     const [updated] = await db
       .update(savedFilters)

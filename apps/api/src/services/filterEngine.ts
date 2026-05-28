@@ -1,6 +1,7 @@
 import { and, eq, or, not, gt, gte, lt, lte, like, ilike, inArray, isNull, isNotNull, sql, SQL } from 'drizzle-orm';
 import { db } from '../db';
 import { devices, deviceHardware, deviceNetwork, deviceMetrics, deviceSoftware, deviceGroups, deviceGroupMemberships } from '../db/schema';
+import { softwareInventory } from '../db/schema/software';
 import type {
   FilterOperator,
   FilterFieldCategory,
@@ -185,7 +186,68 @@ function getColumnForField(field: string): { table: 'devices' | 'hardware' | 'ne
 
 function buildConditionSQL(condition: FilterCondition): SQL<unknown> {
   const { field, operator, value } = condition;
+
+  // Virtual EXISTS-style fields for the quick-add chips
+  // (patches.pending, alerts.critical, system.rebootRequired). Chip emits
+  // `equals 'yes'`; allow `'no'` to mean NOT EXISTS for the advanced
+  // builder.
+  if (field === 'patches.pending' || field === 'alerts.critical' || field === 'system.rebootRequired') {
+    let inner: SQL<unknown>;
+    if (field === 'patches.pending') {
+      inner = sql`EXISTS (SELECT 1 FROM device_patches WHERE device_id = ${devices.id} AND status = 'pending')`;
+    } else if (field === 'alerts.critical') {
+      inner = sql`EXISTS (SELECT 1 FROM alerts WHERE device_id = ${devices.id} AND status = 'active' AND severity = 'critical')`;
+    } else {
+      inner = sql`EXISTS (SELECT 1 FROM patch_job_results WHERE device_id = ${devices.id} AND reboot_required = true AND rebooted_at IS NULL)`;
+    }
+    return operator === 'equals' && value === 'no' ? sql`NOT (${inner})` : inner;
+  }
+
   const fieldInfo = getColumnForField(field);
+
+  // software.installed / software.notInstalled use an EXISTS subquery
+  // against software_inventory rather than a column comparison. Supports
+  // operators: contains / equals / in / hasAny / hasAll (positive) and
+  // negation via the field key (software.notInstalled).
+  if (fieldInfo.table === 'software') {
+    const positive = field === 'software.installed';
+    const matches: SQL<unknown>[] = [];
+    if (operator === 'contains') {
+      matches.push(sql`${softwareInventory.name} ILIKE ${'%' + String(value) + '%'}`);
+    } else if (operator === 'equals') {
+      matches.push(sql`${softwareInventory.name} = ${value}`);
+    } else if (operator === 'in' || operator === 'hasAny') {
+      if (!Array.isArray(value) || value.length === 0) {
+        // No value selected = no constraint = all devices match (no-op filter).
+        return sql`TRUE`;
+      }
+      // Build IN list explicitly — Postgres ANY($1) array binding inside an
+      // EXISTS subquery doesn't infer the text[] cast and errors with
+      // "malformed array literal".
+      const placeholders = (value as string[]).map((v) => sql`${v}`);
+      matches.push(sql`${softwareInventory.name} IN (${sql.join(placeholders, sql`, `)})`);
+    } else if (operator === 'hasAll') {
+      if (!Array.isArray(value) || value.length === 0) {
+        // No value selected = no constraint = all devices match (no-op filter).
+        return sql`TRUE`;
+      }
+      // For hasAll, build N EXISTS conditions AND'd together
+      const parts = (value as string[]).map(
+        (v) => sql`EXISTS (SELECT 1 FROM ${softwareInventory} WHERE ${softwareInventory.deviceId} = ${devices.id} AND ${softwareInventory.name} = ${v})`
+      );
+      const all = parts.reduce((acc, p) => sql`${acc} AND ${p}`);
+      return positive ? all : sql`NOT (${all})`;
+    } else if (operator === 'notContains') {
+      matches.push(sql`${softwareInventory.name} ILIKE ${'%' + String(value) + '%'}`);
+      // Single match list, but flip the polarity
+      const inner = sql`EXISTS (SELECT 1 FROM ${softwareInventory} WHERE ${softwareInventory.deviceId} = ${devices.id} AND ${matches[0]})`;
+      return sql`NOT (${inner})`;
+    } else {
+      throw new Error(`Unsupported software operator: ${operator}`);
+    }
+    const inner = sql`EXISTS (SELECT 1 FROM ${softwareInventory} WHERE ${softwareInventory.deviceId} = ${devices.id} AND ${matches[0]})`;
+    return positive ? inner : sql`NOT (${inner})`;
+  }
 
   // Get the actual column reference
   let columnRef: SQL<unknown>;

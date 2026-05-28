@@ -12,6 +12,10 @@ import DeviceSettingsModal from './DeviceSettingsModal';
 import AddDeviceModal from './AddDeviceModal';
 import CreateGroupModal from './CreateGroupModal';
 import { DeviceFilterBar } from '../filters/DeviceFilterBar';
+import { FilterChipBar } from './FilterChipBar';
+import { QuickAddChips } from './QuickAddChips';
+import { SavedFiltersPanel } from './SavedFiltersPanel';
+import { decodeFilterFromHash, writeFilterToHash, isFiltersV2Enabled } from './filterUrl';
 import { fetchWithAuth } from '../../stores/auth';
 import { sendDeviceCommand, sendBulkCommand, executeScript, toggleMaintenanceMode, decommissionDevice, bulkDecommissionDevices, restoreDevice, permanentDeleteDevice, sendWakeCommand, sendBulkWakeCommand, summarizeBulkWakeFailures, watchWakeOutcome, WakeCommandError, wakeFriendlyErrorMessage } from '../../services/deviceActions';
 import { navigateTo } from '@/lib/navigation';
@@ -57,7 +61,11 @@ export default function DevicesPage() {
   const [scriptPickerOpen, setScriptPickerOpen] = useState(false);
   const [scriptTargetDevices, setScriptTargetDevices] = useState<Device[]>([]);
   const [settingsDevice, setSettingsDevice] = useState<Device | null>(null);
-  const [advancedFilter, setAdvancedFilter] = useState<FilterConditionGroup | null>(null);
+  // Initial filter is read from #filtersV2=… hash so a shared link round-trips.
+  const [advancedFilter, setAdvancedFilter] = useState<FilterConditionGroup | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return decodeFilterFromHash(window.location.hash);
+  });
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [autoSelectGroupId, setAutoSelectGroupId] = useState<string | null>(null);
 
@@ -105,6 +113,58 @@ export default function DevicesPage() {
     () => (lockedOrgFilter ? devices.filter((d) => d.orgId === lockedOrgFilter) : devices),
     [devices, lockedOrgFilter]
   );
+
+  // v2 chip-filter UI feature flag. Evaluated once per mount — toggling
+  // mid-session would require a reload to re-paint state.
+  const filtersV2 = typeof window !== 'undefined' ? isFiltersV2Enabled() : false;
+
+  // Distinct software-name list for the multi-select picker (spec 4.2).
+  // Cheap one-shot fetch; the dropdown is hidden behind a search box so 500
+  // names is fine. We tolerate failure (multi-select falls back to CSV).
+  const [softwareOptions, setSoftwareOptions] = useState<string[] | undefined>(undefined);
+  // Per-name fleet device counts to render next to each picker option.
+  const [softwareOptionCounts, setSoftwareOptionCounts] = useState<Record<string, number> | undefined>(undefined);
+  // Bumped by FilterChipBar's Ctrl+S handler to trigger SavedFiltersPanel's
+  // save prompt. Keeping the panel as the source-of-truth for the save flow
+  // (incl. error handling) and passing only a counter avoids prop drilling.
+  const [saveTrigger, setSaveTrigger] = useState(0);
+
+  useEffect(() => {
+    if (!filtersV2) return;
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        // Fleet-wide distinct list. When the user is in All-orgs scope we
+        // opt out of fetchWithAuth's auto-injected orgId so partner/system
+        // callers see every accessible org's software inventory, not just
+        // the currently-selected org's. Without the opt-out, the dropdown
+        // would silently shrink to current-org software when the toggle
+        // says "All orgs" — defeating the whole point.
+        const res = await fetchWithAuth(
+          '/devices/software/distinct?limit=500',
+          { signal: ctrl.signal },
+          { skipOrgIdInjection: orgScope === 'all' }
+        );
+        if (!res.ok) return;
+        const body = await res.json();
+        const rows = (body?.data ?? []) as Array<{ name?: string; deviceCount?: number }>;
+        const names: string[] = [];
+        const counts: Record<string, number> = {};
+        for (const r of rows) {
+          if (!r.name) continue;
+          names.push(r.name);
+          if (typeof r.deviceCount === 'number') counts[r.name] = r.deviceCount;
+        }
+        setSoftwareOptions(names);
+        setSoftwareOptionCounts(counts);
+      } catch (e) {
+        if ((e as Error).name !== 'AbortError') {
+          // Quiet: editor falls back to comma-separated text input.
+        }
+      }
+    })();
+    return () => ctrl.abort();
+  }, [filtersV2, orgScope]);
 
   const scriptTargetLabel =
     scriptTargetDevices.length === 1
@@ -292,6 +352,14 @@ export default function DevicesPage() {
   useEffect(() => {
     subscribe(['device.online', 'device.offline', 'device.updated', 'device.enrolled', 'device.decommissioned']);
   }, [subscribe]);
+
+  // Sync the chip-bar filter state into the URL hash so the view is
+  // shareable. Only active when v2 UI is on; legacy DeviceFilterBar owns
+  // its own state and doesn't expect hash interop.
+  useEffect(() => {
+    if (!filtersV2) return;
+    writeFilterToHash(advancedFilter);
+  }, [advancedFilter, filtersV2]);
 
   const handleSelectDevice = (device: Device) => {
     void navigateTo(`/devices/${device.id}`);
@@ -734,12 +802,34 @@ export default function DevicesPage() {
         </div>
       </div>
 
-      <DeviceFilterBar
-        value={advancedFilter}
-        onChange={setAdvancedFilter}
-        showSavedFilters={true}
-        collapsible={true}
-      />
+      {filtersV2 ? (
+        <div className="flex flex-col gap-3 lg:flex-row">
+          <SavedFiltersPanel
+            currentFilter={advancedFilter}
+            onApply={setAdvancedFilter}
+            saveTrigger={saveTrigger}
+          />
+          <div className="flex flex-1 flex-col gap-2">
+            <FilterChipBar
+              value={advancedFilter}
+              onChange={setAdvancedFilter}
+              orgs={orgs}
+              sites={sites}
+              softwareOptions={softwareOptions}
+              softwareOptionCounts={softwareOptionCounts}
+              onSaveRequested={() => setSaveTrigger(t => t + 1)}
+            />
+            <QuickAddChips value={advancedFilter} onChange={setAdvancedFilter} />
+          </div>
+        </div>
+      ) : (
+        <DeviceFilterBar
+          value={advancedFilter}
+          onChange={setAdvancedFilter}
+          showSavedFilters={true}
+          collapsible={true}
+        />
+      )}
 
       {bulkProgress && (
         <div className="rounded-md border bg-muted/20 px-4 py-3">
@@ -788,6 +878,7 @@ export default function DevicesPage() {
           autoSelectGroupId={autoSelectGroupId}
           onAutoSelectConsumed={handleAutoSelectConsumed}
           lockedOrgFilter={lockedOrgFilter}
+          orgScope={orgScope}
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

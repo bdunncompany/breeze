@@ -90,6 +90,11 @@ type DeviceListProps = {
   // the choice — e.g. via the Current-org / All-orgs scope toggle on
   // DevicesPage). `null` means "do not lock; user controls via dropdown."
   lockedOrgFilter?: string | null;
+  // Current org-scope from DevicesPage. When 'all', the filter-preview
+  // fetch opts out of fetchWithAuth's auto-injected orgId so a partner
+  // caller actually sees matches across every accessible org instead of
+  // having the server silently pre-narrow to current-org.
+  orgScope?: 'current' | 'all';
 };
 
 const statusColors: Record<DeviceStatus, string> = {
@@ -137,7 +142,8 @@ export default function DeviceList({
   onBulkAction,
   pageSize = 10,
   serverFilter = null,
-  lockedOrgFilter = null
+  lockedOrgFilter = null,
+  orgScope = 'current'
 }: DeviceListProps) {
   // Use provided timezone or browser default
   const effectiveTimezone = timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -286,16 +292,26 @@ export default function DeviceList({
     setServerFilterLoading(true);
     const controller = new AbortController();
 
-    fetchWithAuth('/filters/preview', {
-      method: 'POST',
-      body: JSON.stringify({ conditions: serverFilter, limit: 100 }),
-      signal: controller.signal
-    })
+    // v2 chip-filter endpoint: POST /devices/filter-preview, body is the
+    // FilterConditionGroup itself, response is `{ matchingIds: string[] }`.
+    // skipOrgIdInjection when the parent says "all orgs" so a partner
+    // caller's filter spans every accessible org (otherwise the server
+    // pre-narrows to current-org and the chip filter looks empty for cross-
+    // org criteria).
+    fetchWithAuth(
+      '/devices/filter-preview',
+      {
+        method: 'POST',
+        body: JSON.stringify(serverFilter),
+        signal: controller.signal
+      },
+      { skipOrgIdInjection: orgScope === 'all' }
+    )
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
           const result = data.data ?? data;
-          const ids = new Set<string>((result.devices ?? []).map((d: { id: string }) => d.id));
+          const ids = new Set<string>((result.matchingIds ?? []) as string[]);
           setServerFilterIds(ids);
         }
       })
@@ -308,7 +324,7 @@ export default function DeviceList({
       .finally(() => setServerFilterLoading(false));
 
     return () => controller.abort();
-  }, [serverFilter]);
+  }, [serverFilter, orgScope]);
 
   const filteredDevices = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
