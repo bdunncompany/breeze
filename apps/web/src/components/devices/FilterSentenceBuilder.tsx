@@ -29,6 +29,9 @@ export interface FilterSentenceBuilderProps {
   sites?: NamedRef[];
   softwareOptions?: string[];
   softwareOptionCounts?: Record<string, number>;
+  // Threaded down to the software multi-select so the parent can debounce
+  // and refetch the distinct endpoint with `?search=...` as the user types.
+  onSoftwareSearchChange?: (query: string) => void;
   // When set, Save button is rendered. Parent owns the save dialog flow.
   onSaveRequested?: (group: FilterConditionGroup) => void;
 }
@@ -58,7 +61,7 @@ export function isChipRenderable(group: FilterConditionGroup | null): boolean {
 const EMPTY_GROUP: FilterConditionGroup = { operator: 'AND', conditions: [] };
 
 export function FilterSentenceBuilder({
-  value, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSaveRequested
+  value, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange, onSaveRequested
 }: FilterSentenceBuilderProps) {
   const hasConditions = value.conditions.length > 0;
   return (
@@ -73,6 +76,7 @@ export function FilterSentenceBuilder({
         sites={sites}
         softwareOptions={softwareOptions}
         softwareOptionCounts={softwareOptionCounts}
+        onSoftwareSearchChange={onSoftwareSearchChange}
         depth={0}
       />
       <div className="mt-3 flex items-center justify-between gap-2 border-t pt-2">
@@ -119,9 +123,10 @@ interface GroupEditorProps {
   sites?: NamedRef[];
   softwareOptions?: string[];
   softwareOptionCounts?: Record<string, number>;
+  onSoftwareSearchChange?: (query: string) => void;
   depth: number;
 }
-function GroupEditor({ group, onChange, orgs, sites, softwareOptions, softwareOptionCounts, depth }: GroupEditorProps) {
+function GroupEditor({ group, onChange, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange, depth }: GroupEditorProps) {
   const toggleOp = () => onChange({ ...group, operator: group.operator === 'AND' ? 'OR' : 'AND' });
   const addCondition = () => {
     const def = V2_FILTER_FIELDS[0]; // pick a stable default; user changes it via dropdown
@@ -174,6 +179,7 @@ function GroupEditor({ group, onChange, orgs, sites, softwareOptions, softwareOp
                   sites={sites}
                   softwareOptions={softwareOptions}
                   softwareOptionCounts={softwareOptionCounts}
+                  onSoftwareSearchChange={onSoftwareSearchChange}
                   depth={depth + 1}
                 />
                 <button
@@ -198,6 +204,7 @@ function GroupEditor({ group, onChange, orgs, sites, softwareOptions, softwareOp
               sites={sites}
               softwareOptions={softwareOptions}
               softwareOptionCounts={softwareOptionCounts}
+              onSoftwareSearchChange={onSoftwareSearchChange}
               rowId={`${depth}-${i}`}
             />
           );
@@ -233,9 +240,10 @@ interface ConditionRowProps {
   sites?: NamedRef[];
   softwareOptions?: string[];
   softwareOptionCounts?: Record<string, number>;
+  onSoftwareSearchChange?: (query: string) => void;
   rowId: string;
 }
-function ConditionRow({ condition, onChange, onRemove, orgs, sites, softwareOptions, softwareOptionCounts, rowId }: ConditionRowProps) {
+function ConditionRow({ condition, onChange, onRemove, orgs, sites, softwareOptions, softwareOptionCounts, onSoftwareSearchChange, rowId }: ConditionRowProps) {
   const field = getFieldDef(condition.field) ?? V2_FILTER_FIELDS[0];
   const setField = (key: string) => {
     const def = getFieldDef(key);
@@ -268,6 +276,7 @@ function ConditionRow({ condition, onChange, onRemove, orgs, sites, softwareOpti
           sites={sites}
           softwareOptions={softwareOptions}
           softwareOptionCounts={softwareOptionCounts}
+          onSoftwareSearchChange={onSoftwareSearchChange}
         />
       </div>
       <button

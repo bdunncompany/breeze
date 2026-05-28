@@ -107,11 +107,18 @@ export default function DevicesPage() {
   const filtersV2 = typeof window !== 'undefined' ? isFiltersV2Enabled() : false;
 
   // Distinct software-name list for the multi-select picker (spec 4.2).
-  // Cheap one-shot fetch; the dropdown is hidden behind a search box so 500
-  // names is fine. We tolerate failure (multi-select falls back to CSV).
+  // Driven by `softwareSearch` below — the parent debounces the picker's
+  // search input and refetches `?search=...` so the picker can find ANY
+  // software name regardless of fleet size. A pure alphabetical-first-N
+  // bulk fetch (the old shape) silently truncated and hid matches that
+  // sorted past the cap — e.g. Mozilla Firefox on a fleet that also had
+  // ~500 entries with names sorting earlier. We tolerate failure (the
+  // multi-select falls back to a CSV input when no options are present).
   const [softwareOptions, setSoftwareOptions] = useState<string[] | undefined>(undefined);
-  // Per-name fleet device counts to render next to each picker option.
   const [softwareOptionCounts, setSoftwareOptionCounts] = useState<Record<string, number> | undefined>(undefined);
+  // Empty string fetches the alphabetical first page (initial render); each
+  // keystroke in the picker debounces a refetch with the new query.
+  const [softwareSearch, setSoftwareSearch] = useState<string>('');
   // Bumped by FilterChipBar's Ctrl+S handler to trigger SavedFiltersPanel's
   // save prompt. Keeping the panel as the source-of-truth for the save flow
   // (incl. error handling) and passing only a counter avoids prop drilling.
@@ -120,39 +127,49 @@ export default function DevicesPage() {
   useEffect(() => {
     if (!filtersV2) return;
     const ctrl = new AbortController();
-    (async () => {
-      try {
-        // Fleet-wide distinct list. When the user is in All-orgs scope we
-        // opt out of fetchWithAuth's auto-injected orgId so partner/system
-        // callers see every accessible org's software inventory, not just
-        // the currently-selected org's. Without the opt-out, the dropdown
-        // would silently shrink to current-org software when the toggle
-        // says "All orgs" — defeating the whole point.
-        const res = await fetchWithAuth(
-          '/devices/software/distinct?limit=500',
-          { signal: ctrl.signal },
-          { skipOrgIdInjection: orgScope === 'all' }
-        );
-        if (!res.ok) return;
-        const body = await res.json();
-        const rows = (body?.data ?? []) as Array<{ name?: string; deviceCount?: number }>;
-        const names: string[] = [];
-        const counts: Record<string, number> = {};
-        for (const r of rows) {
-          if (!r.name) continue;
-          names.push(r.name);
-          if (typeof r.deviceCount === 'number') counts[r.name] = r.deviceCount;
+    // Debounce the picker's keystrokes by 250ms before hitting the server.
+    // Empty `softwareSearch` (initial mount, or user cleared the box) fetches
+    // the alphabetical first page so the picker has something to show
+    // immediately. Subsequent keystrokes refetch with `?search=...`, which
+    // is backed by the pg_trgm GIN index on software_inventory.name added
+    // in migration 2026-05-28-software-inventory-name-trgm.sql.
+    const trimmed = softwareSearch.trim();
+    const limit = trimmed ? 200 : 200;
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const qs = trimmed
+            ? `?limit=${limit}&search=${encodeURIComponent(trimmed)}`
+            : `?limit=${limit}`;
+          const res = await fetchWithAuth(
+            `/devices/software/distinct${qs}`,
+            { signal: ctrl.signal },
+            { skipOrgIdInjection: orgScope === 'all' }
+          );
+          if (!res.ok) return;
+          const body = await res.json();
+          const rows = (body?.data ?? []) as Array<{ name?: string; deviceCount?: number }>;
+          const names: string[] = [];
+          const counts: Record<string, number> = {};
+          for (const r of rows) {
+            if (!r.name) continue;
+            names.push(r.name);
+            if (typeof r.deviceCount === 'number') counts[r.name] = r.deviceCount;
+          }
+          setSoftwareOptions(names);
+          setSoftwareOptionCounts(counts);
+        } catch (e) {
+          if ((e as Error).name !== 'AbortError') {
+            // Quiet: editor falls back to comma-separated text input.
+          }
         }
-        setSoftwareOptions(names);
-        setSoftwareOptionCounts(counts);
-      } catch (e) {
-        if ((e as Error).name !== 'AbortError') {
-          // Quiet: editor falls back to comma-separated text input.
-        }
-      }
-    })();
-    return () => ctrl.abort();
-  }, [filtersV2, orgScope]);
+      })();
+    }, trimmed ? 250 : 0);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [filtersV2, orgScope, softwareSearch]);
 
   const scriptTargetLabel =
     scriptTargetDevices.length === 1
@@ -790,6 +807,7 @@ export default function DevicesPage() {
             sites={sites}
             softwareOptions={softwareOptions}
             softwareOptionCounts={softwareOptionCounts}
+            onSoftwareSearchChange={setSoftwareSearch}
             onSaveRequested={() => setSaveTrigger(t => t + 1)}
             rightSlot={
               <SavedFiltersPanel
