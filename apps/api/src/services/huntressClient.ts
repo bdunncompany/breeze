@@ -375,11 +375,13 @@ export class HuntressClient {
     for (const [key, value] of Object.entries(query ?? {})) {
       url.searchParams.set(key, value);
     }
-    // Send both Bearer token and X-API-Key header for compatibility with different Huntress API auth modes
+    // Huntress API only accepts HTTP Basic auth (verified live 2026-05-29: Bearer and
+    // X-API-Key both return 401 "Missing or incorrect authorization scheme"). The
+    // integration's apiKey field stores the literal "<key>:<secret>" pair from the
+    // Huntress portal; base64-encode it for the Basic auth header.
     const headers: Record<string, string> = {
       Accept: 'application/json',
-      Authorization: `Bearer ${this.apiKey}`,
-      'X-API-Key': this.apiKey,
+      Authorization: `Basic ${Buffer.from(this.apiKey).toString('base64')}`,
     };
     if (this.accountId) {
       headers['X-Account-Id'] = this.accountId;
@@ -449,7 +451,7 @@ export class HuntressClient {
   }
 
   async listIncidents(since?: Date): Promise<HuntressIncidentRecord[]> {
-    const rows = await this.requestPaginated('/incidents', since, ['incidents', 'alerts', 'findings', 'data', 'items', 'results']);
+    const rows = await this.requestPaginated('/incident_reports', since, ['incident_reports', 'incidents', 'alerts', 'findings', 'data', 'items', 'results']);
     const incidents = rows
       .map((row) => normalizeIncident(row))
       .filter((row): row is HuntressIncidentRecord => row !== null);

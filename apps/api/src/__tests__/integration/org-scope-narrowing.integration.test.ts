@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 
@@ -43,6 +44,7 @@ async function seedDevice(orgId: string, siteId: string, agentId: string, hostna
       status: 'online'
     })
     .returning({ id: devices.id });
+  if (!row) throw new Error('seedDevice: insert returned no row');
   return row.id;
 }
 
@@ -51,13 +53,14 @@ async function seedPatch(externalId: string, title: string) {
     .insert(patches)
     .values({ source: 'microsoft', externalId, title, requiresReboot: false })
     .returning({ id: patches.id });
+  if (!row) throw new Error('seedPatch: insert returned no row');
   return row.id;
 }
 
 describe('org-scope narrowing (PR #973) — /patches and /security/status', () => {
   // `patches` is a global catalog (no tenant FK) so cleanupDatabase does not
-  // truncate it between tests; a per-run counter keeps external_ids unique.
-  let run = 0;
+  // truncate it between tests or across runs; random external_ids keep each
+  // seeded patch unique regardless of leftover catalog rows.
   let app: Hono;
   let partnerEnv: TestEnvironment; // partner P1, owns orgA (partnerEnv.organization)
   let orgAId: string;
@@ -68,7 +71,6 @@ describe('org-scope narrowing (PR #973) — /patches and /security/status', () =
   let patchB: string;
 
   beforeEach(async () => {
-    run += 1;
     // Partner P1 with org A + a partner-scope user/token that can access all of P1's orgs.
     partnerEnv = await setupTestEnvironment({ scope: 'partner' });
     token = partnerEnv.token;
@@ -95,8 +97,8 @@ describe('org-scope narrowing (PR #973) — /patches and /security/status', () =
     );
 
     // Distinct patches present on A's device vs B's device.
-    patchA = await seedPatch(`KB-A-${run}`, 'Patch only on org A device');
-    patchB = await seedPatch(`KB-B-${run}`, 'Patch only on org B device');
+    patchA = await seedPatch(`KB-A-${randomUUID()}`, 'Patch only on org A device');
+    patchB = await seedPatch(`KB-B-${randomUUID()}`, 'Patch only on org B device');
     await getTestDb()
       .insert(devicePatches)
       .values([
