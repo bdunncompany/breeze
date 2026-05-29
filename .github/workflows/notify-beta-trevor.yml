@@ -2,6 +2,11 @@ name: Notify on beta-trevor issue
 # Fires a Pushover to Billy whenever Trevor opens a beta bug (auto-labeled
 # beta-trevor by the issue template). Requires repo secrets PUSHOVER_TOKEN
 # and PUSHOVER_USER.
+#
+# priority=0 (normal): intentionally NON-critical. Per Pushover, priority 0
+# respects quiet hours / iOS Focus; priority 1 ignores quiet hours and 2 is an
+# emergency Critical Alert that wakes through DND. A beta bug must never wake
+# through Focus, so this stays at 0.
 on:
   issues:
     types: [opened]
@@ -15,6 +20,7 @@ jobs:
           curl -s \
             --form-string "token=${{ secrets.PUSHOVER_TOKEN }}" \
             --form-string "user=${{ secrets.PUSHOVER_USER }}" \
+            --form-string "priority=0" \
             --form-string "title=New beta bug from Trevor" \
             --form-string "message=${{ github.event.issue.title }}" \
             --form-string "url=${{ github.event.issue.html_url }}" \
