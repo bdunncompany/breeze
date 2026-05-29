@@ -255,7 +255,7 @@ export function DeviceTargetSelector({
                 className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
-            <div className="max-h-64 overflow-y-auto space-y-1">
+            <div className="max-h-[50vh] overflow-y-auto space-y-1">
               {filteredDevices.length === 0 ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">No devices found</p>
               ) : (
@@ -300,7 +300,7 @@ export function DeviceTargetSelector({
             <span className="text-sm font-medium">
               {value.groupIds?.length ?? 0} group{(value.groupIds?.length ?? 0) !== 1 ? 's' : ''} selected
             </span>
-            <div className="max-h-64 overflow-y-auto space-y-1">
+            <div className="max-h-[50vh] overflow-y-auto space-y-1">
               {groups.length === 0 ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">No device groups available</p>
               ) : (

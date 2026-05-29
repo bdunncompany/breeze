@@ -22,6 +22,7 @@ import type {
 } from '@breeze/shared';
 import { operatorLabel } from './filterFields';
 import { X, Search } from 'lucide-react';
+import { useFillViewportHeight } from '../../hooks/useFillViewportHeight';
 
 const NO_VALUE_OPERATORS: FilterOperator[] = ['isNull', 'isNotNull', 'isEmpty', 'isNotEmpty'];
 
@@ -162,7 +163,7 @@ function renderValueInput(
     if (field.type === 'enum' && field.enumValues) {
       const selected = Array.isArray(value) ? (value as string[]) : [];
       return (
-        <div data-testid="filter-multi-enum" className="flex flex-col gap-1 max-h-40 overflow-y-auto rounded border p-2">
+        <div data-testid="filter-multi-enum" className="flex flex-col gap-1 max-h-[55vh] overflow-y-auto rounded border p-2">
           {field.enumValues.map(v => (
             <label key={v} className="flex items-center gap-2 text-sm">
               <input
@@ -290,6 +291,7 @@ interface NamedMultiSelectProps {
 }
 function NamedMultiSelect({ label, options, condition, onChange, testId }: NamedMultiSelectProps) {
   const [q, setQ] = useState('');
+  const { ref: listRef, maxHeight: listMaxHeight } = useFillViewportHeight<HTMLUListElement>();
   const selected: string[] = Array.isArray(condition.value)
     ? (condition.value as string[])
     : typeof condition.value === 'string' && condition.value
@@ -335,7 +337,7 @@ function NamedMultiSelect({ label, options, condition, onChange, testId }: Named
           ))}
         </div>
       )}
-      <ul className="max-h-44 overflow-y-auto rounded border">
+      <ul ref={listRef} style={{ maxHeight: listMaxHeight }} className="overflow-y-auto rounded border">
         {filtered.length === 0 && (
           <li className="px-2 py-1 text-xs text-muted-foreground">No matches</li>
         )}
@@ -379,6 +381,7 @@ interface SoftwareMultiSelectProps {
 }
 function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts, onSearchChange }: SoftwareMultiSelectProps) {
   const [q, setQ] = useState('');
+  const { ref: listRef, maxHeight: listMaxHeight } = useFillViewportHeight<HTMLUListElement>();
   const selected: string[] = Array.isArray(condition.value)
     ? (condition.value as string[])
     : typeof condition.value === 'string' && condition.value
@@ -471,7 +474,7 @@ function SoftwareMultiSelect({ field, condition, onChange, options, optionCounts
               className="flex-1 bg-transparent text-xs outline-none"
             />
           </div>
-          <ul className="max-h-40 overflow-y-auto rounded border">
+          <ul ref={listRef} style={{ maxHeight: listMaxHeight }} className="overflow-y-auto rounded border">
             {filtered.length === 0 && (
               <li className="px-2 py-1 text-xs text-muted-foreground">No matches</li>
             )}

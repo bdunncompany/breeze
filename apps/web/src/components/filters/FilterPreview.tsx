@@ -70,7 +70,7 @@ export function FilterPreview({
           </div>
 
           {preview.devices.length > 0 && (
-            <div className="space-y-1 max-h-48 overflow-y-auto">
+            <div className="space-y-1 max-h-[50vh] overflow-y-auto">
               {preview.devices.map((device) => (
                 <div
                   key={device.id}

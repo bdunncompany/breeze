@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
 import type { FilterFieldDefinition, FilterFieldCategory } from '@breeze/shared';
+import { useFillViewportHeight } from '../../hooks/useFillViewportHeight';
 
 interface FieldSelectorProps {
   value: string;
@@ -43,6 +44,7 @@ export function FieldSelector({
   const [searchQuery, setSearchQuery] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { ref: listRef, maxHeight: listMaxHeight } = useFillViewportHeight<HTMLDivElement>(isOpen);
 
   const selectedField = useMemo(() => {
     return fields.find(f => f.key === value);
@@ -105,7 +107,7 @@ export function FieldSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 z-50 mt-1 w-72 rounded-md border bg-popover shadow-lg">
+        <div className="absolute top-full left-0 z-50 mt-1 w-80 rounded-md border bg-popover shadow-lg">
           <div className="p-2 border-b">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -120,7 +122,7 @@ export function FieldSelector({
             </div>
           </div>
 
-          <div className="max-h-72 overflow-y-auto p-1">
+          <div ref={listRef} style={{ maxHeight: listMaxHeight }} className="overflow-y-auto p-1">
             {groupedFields.size === 0 ? (
               <div className="px-3 py-2 text-sm text-muted-foreground">
                 No fields match your search
