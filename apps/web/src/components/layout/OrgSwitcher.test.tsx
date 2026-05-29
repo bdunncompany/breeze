@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import OrgSwitcher, { getOrgSwitchRedirect } from './OrgSwitcher';
@@ -9,6 +9,7 @@ const {
   setOrgScopeMock,
   fetchOrganizationsMock,
   fetchSitesMock,
+  waitForPendingRefreshMock,
   mockStoreRef,
 } = vi.hoisted(() => ({
   setOrganizationMock: vi.fn(),
@@ -16,7 +17,15 @@ const {
   setOrgScopeMock: vi.fn(),
   fetchOrganizationsMock: vi.fn(),
   fetchSitesMock: vi.fn(),
+  waitForPendingRefreshMock: vi.fn().mockResolvedValue(undefined),
   mockStoreRef: { current: null as any },
+}));
+
+// The org/site switch handlers await waitForPendingRefresh() before navigating
+// so an in-flight /auth/refresh can't be interrupted (the #950 login-bounce
+// race, fixed in #953/#956/#958). Mock it to resolve immediately here.
+vi.mock('@/stores/auth', () => ({
+  waitForPendingRefresh: waitForPendingRefreshMock
 }));
 
 let mockStoreState: {
@@ -78,6 +87,8 @@ describe('OrgSwitcher org change navigation', () => {
     setOrgScopeMock.mockReset();
     fetchOrganizationsMock.mockReset();
     fetchSitesMock.mockReset();
+    waitForPendingRefreshMock.mockClear();
+    waitForPendingRefreshMock.mockResolvedValue(undefined);
 
     mockStoreState = {
       currentOrgId: 'org-a',
@@ -137,7 +148,7 @@ describe('OrgSwitcher org change navigation', () => {
     fireEvent.click(orgButtons[0]);
   }
 
-  it('redirects to /devices when switching orgs from a device-detail page', () => {
+  it('redirects to /devices when switching orgs from a device-detail page', async () => {
     const { reloadMock, hrefSetter } = stubLocation('/devices/abc123');
 
     render(<OrgSwitcher />);
@@ -145,11 +156,13 @@ describe('OrgSwitcher org change navigation', () => {
     openDropdownAndClickOrg('Org B');
 
     expect(setOrganizationMock).toHaveBeenCalledWith('org-b');
-    expect(hrefSetter).toHaveBeenCalledWith('/devices');
+    // Navigation is gated behind await waitForPendingRefresh() (#950 race guard).
+    await waitFor(() => expect(hrefSetter).toHaveBeenCalledWith('/devices'));
     expect(reloadMock).not.toHaveBeenCalled();
+    expect(waitForPendingRefreshMock).toHaveBeenCalled();
   });
 
-  it('reloads in place when switching orgs from a non-detail page', () => {
+  it('reloads in place when switching orgs from a non-detail page', async () => {
     const { reloadMock, hrefSetter } = stubLocation('/devices');
 
     render(<OrgSwitcher />);
@@ -157,8 +170,9 @@ describe('OrgSwitcher org change navigation', () => {
     openDropdownAndClickOrg('Org B');
 
     expect(setOrganizationMock).toHaveBeenCalledWith('org-b');
-    expect(reloadMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(reloadMock).toHaveBeenCalledTimes(1));
     expect(hrefSetter).not.toHaveBeenCalled();
+    expect(waitForPendingRefreshMock).toHaveBeenCalled();
   });
 
   it('does nothing when clicking the already-selected organization', () => {

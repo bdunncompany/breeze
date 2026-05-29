@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOrgStore, type Organization, type Site } from '@/stores/orgStore';
+import { waitForPendingRefresh } from '@/stores/auth';
 
 /**
  * When switching organizations, certain detail-view routes show data scoped to
@@ -326,7 +327,7 @@ export default function OrgSwitcher() {
                   key={org.id}
                   org={org}
                   isSelected={org.id === currentOrgId && orgScope === 'current'}
-                  onSelect={() => {
+                  onSelect={async () => {
                     // Picking a specific org from the dropdown implies the
                     // user wants to narrow to that org, so auto-flip the
                     // scope back to 'current' (if it was 'all'). This is a
@@ -337,6 +338,11 @@ export default function OrgSwitcher() {
                     }
                     if (org.id !== currentOrgId || orgScope === 'all') {
                       setOrganization(org.id);
+                      // Wait for any in-flight /auth/refresh to settle before
+                      // navigating — leaving while a refresh is mid-flight
+                      // clears the cookie jti and bounces to /login (#950,
+                      // fixed in #953/#956/#958).
+                      await waitForPendingRefresh();
                       const redirect = getOrgSwitchRedirect(window.location.pathname);
                       if (redirect) {
                         window.location.href = redirect;
@@ -347,11 +353,13 @@ export default function OrgSwitcher() {
                   }}
                   sites={sites}
                   currentSiteId={currentSiteId}
-                  onSelectSite={(siteId) => {
+                  onSelectSite={async (siteId) => {
                     const changed = siteId !== currentSiteId;
                     setSite(siteId);
                     setIsOpen(false);
                     if (changed) {
+                      // Same #950 refresh-race guard before reloading.
+                      await waitForPendingRefresh();
                       window.location.reload();
                     }
                   }}
