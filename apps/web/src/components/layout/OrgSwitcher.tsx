@@ -3,13 +3,13 @@ import {
   Building2,
   ChevronDown,
   ChevronRight,
+  Globe,
   MapPin,
   Check,
   Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOrgStore, type Organization, type Site } from '@/stores/orgStore';
-import { waitForPendingRefresh } from '@/stores/auth';
 
 /**
  * When switching organizations, certain detail-view routes show data scoped to
@@ -148,6 +148,64 @@ function OrgMenuItem({
   );
 }
 
+/**
+ * Pill toggle that flips the global org scope. Sits to the LEFT of the org
+ * picker. When in `all`, the picker is dimmed (still selectable for future
+ * narrowing) and every fetchWithAuth call goes out without orgId injection
+ * — server returns data across every accessible org.
+ *
+ * Hidden when the user has access to only one org (toggle would be a no-op).
+ */
+function OrgScopePill() {
+  const orgScope = useOrgStore((s) => s.orgScope);
+  const setOrgScope = useOrgStore((s) => s.setOrgScope);
+  const organizationsCount = useOrgStore((s) => s.organizations.length);
+
+  if (organizationsCount <= 1) return null;
+
+  return (
+    <div
+      role="group"
+      aria-label="Organization scope"
+      data-testid="org-scope-pill"
+      className="inline-flex overflow-hidden rounded-md border text-xs"
+    >
+      <button
+        type="button"
+        data-testid="org-scope-current"
+        onClick={() => setOrgScope('current')}
+        aria-pressed={orgScope === 'current'}
+        className={cn(
+          'flex items-center gap-1 px-2 py-1.5 transition-colors',
+          orgScope === 'current'
+            ? 'bg-primary text-primary-foreground'
+            : 'hover:bg-muted'
+        )}
+        title="Show data for the currently selected organization only"
+      >
+        <Building2 className="h-3 w-3" />
+        Current
+      </button>
+      <button
+        type="button"
+        data-testid="org-scope-all"
+        onClick={() => setOrgScope('all')}
+        aria-pressed={orgScope === 'all'}
+        className={cn(
+          'flex items-center gap-1 px-2 py-1.5 transition-colors',
+          orgScope === 'all'
+            ? 'bg-primary text-primary-foreground'
+            : 'hover:bg-muted'
+        )}
+        title="Show data across every accessible organization"
+      >
+        <Globe className="h-3 w-3" />
+        All orgs
+      </button>
+    </div>
+  );
+}
+
 export default function OrgSwitcher() {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -155,6 +213,7 @@ export default function OrgSwitcher() {
   const {
     currentOrgId,
     currentSiteId,
+    orgScope,
     organizations,
     sites,
     isLoading,
@@ -204,35 +263,51 @@ export default function OrgSwitcher() {
   const currentOrg = organizations.find((org) => org.id === currentOrgId);
   const currentSite = sites.find((site) => site.id === currentSiteId);
 
-  // Build display text
-  const displayText = currentOrg
-    ? currentSite
-      ? `${currentOrg.name} / ${currentSite.name}`
-      : currentOrg.name
-    : 'Select Organization';
+  // Build display text. In All-orgs scope the picker shows the partner-wide
+  // label so the user can never be confused about which mode they're in.
+  const displayText = orgScope === 'all'
+    ? 'All organizations'
+    : currentOrg
+      ? currentSite
+        ? `${currentOrg.name} / ${currentSite.name}`
+        : currentOrg.name
+      : 'Select Organization';
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
-        disabled={isLoading}
-        title="Select Organization (Cmd+O)"
-      >
-        {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Building2 className="h-4 w-4" />
-        )}
-        <span className="max-w-[200px] truncate">{displayText}</span>
-        {currentOrg && <StatusBadge status={currentOrg.status} />}
-        <ChevronDown
+    <div className="flex items-center gap-2">
+      <OrgScopePill />
+      <div className="relative" ref={dropdownRef}>
+        <button
+          data-testid="org-switcher-trigger"
+          onClick={() => setIsOpen(!isOpen)}
           className={cn(
-            'h-4 w-4 text-muted-foreground transition-transform',
-            isOpen && 'rotate-180'
+            'flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-muted',
+            // Visually de-emphasize the picker when scope is All — the user
+            // can still drill into a specific org via the dropdown, but the
+            // picker is no longer the load-bearing scope control.
+            orgScope === 'all' && 'opacity-70'
           )}
-        />
-      </button>
+          disabled={isLoading}
+          title={orgScope === 'all'
+            ? 'Showing all organizations. Click to narrow to a specific org.'
+            : 'Select Organization (Cmd+O)'}
+        >
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : orgScope === 'all' ? (
+            <Globe className="h-4 w-4" />
+          ) : (
+            <Building2 className="h-4 w-4" />
+          )}
+          <span className="max-w-[200px] truncate">{displayText}</span>
+          {orgScope === 'current' && currentOrg && <StatusBadge status={currentOrg.status} />}
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-muted-foreground transition-transform',
+              isOpen && 'rotate-180'
+            )}
+          />
+        </button>
 
       {isOpen && (
         <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-md border bg-popover p-2 shadow-lg">
@@ -245,19 +320,23 @@ export default function OrgSwitcher() {
               {isLoading ? 'Loading...' : 'No organizations available'}
             </div>
           ) : (
-            <div className="max-h-80 space-y-1 overflow-y-auto">
+            <div className="max-h-[calc(100vh-160px)] space-y-1 overflow-y-auto">
               {organizations.map((org) => (
                 <OrgMenuItem
                   key={org.id}
                   org={org}
-                  isSelected={org.id === currentOrgId}
-                  onSelect={async () => {
-                    if (org.id !== currentOrgId) {
+                  isSelected={org.id === currentOrgId && orgScope === 'current'}
+                  onSelect={() => {
+                    // Picking a specific org from the dropdown implies the
+                    // user wants to narrow to that org, so auto-flip the
+                    // scope back to 'current' (if it was 'all'). This is a
+                    // recovery affordance — switching from All to a single
+                    // org would otherwise be a two-click operation.
+                    if (orgScope === 'all') {
+                      useOrgStore.getState().setOrgScope('current');
+                    }
+                    if (org.id !== currentOrgId || orgScope === 'all') {
                       setOrganization(org.id);
-                      // Wait for any refresh that was already in flight at click time
-                      // (e.g. AdminSessionManager's 5-min heartbeat) to settle so the
-                      // post-reload page doesn't reuse the same cookie jti. See #950.
-                      await waitForPendingRefresh();
                       const redirect = getOrgSwitchRedirect(window.location.pathname);
                       if (redirect) {
                         window.location.href = redirect;
@@ -268,14 +347,11 @@ export default function OrgSwitcher() {
                   }}
                   sites={sites}
                   currentSiteId={currentSiteId}
-                  onSelectSite={async (siteId) => {
+                  onSelectSite={(siteId) => {
                     const changed = siteId !== currentSiteId;
                     setSite(siteId);
                     setIsOpen(false);
                     if (changed) {
-                      // Same refresh-race avoidance as the org-switch path
-                      // above — see #950.
-                      await waitForPendingRefresh();
                       window.location.reload();
                     }
                   }}
@@ -285,6 +361,7 @@ export default function OrgSwitcher() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
