@@ -1,0 +1,22 @@
+name: Notify on beta-trevor issue
+# Fires a Pushover to Billy whenever Trevor opens a beta bug (auto-labeled
+# beta-trevor by the issue template). Requires repo secrets PUSHOVER_TOKEN
+# and PUSHOVER_USER.
+on:
+  issues:
+    types: [opened]
+jobs:
+  pushover:
+    if: contains(github.event.issue.labels.*.name, 'beta-trevor')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Pushover notification
+        run: |
+          curl -s \
+            --form-string "token=${{ secrets.PUSHOVER_TOKEN }}" \
+            --form-string "user=${{ secrets.PUSHOVER_USER }}" \
+            --form-string "title=New beta bug from Trevor" \
+            --form-string "message=${{ github.event.issue.title }}" \
+            --form-string "url=${{ github.event.issue.html_url }}" \
+            --form-string "url_title=Open issue" \
+            https://api.pushover.net/1/messages.json
