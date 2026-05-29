@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Plus } from 'lucide-react';
 import type { FilterFieldDefinition } from '@breeze/shared';
 import { V2_FILTER_FIELDS, fieldCategoryLabel } from './filterFields';
+import { useFillViewportHeight } from '../../hooks/useFillViewportHeight';
 
 export interface FilterAddDropdownProps {
   onSelect: (field: FilterFieldDefinition) => void;
@@ -14,6 +15,7 @@ export function FilterAddDropdown({ onSelect }: FilterAddDropdownProps) {
   const [q, setQ] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { ref: listRef, maxHeight: listMaxHeight } = useFillViewportHeight<HTMLDivElement>(open);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -72,7 +74,7 @@ export function FilterAddDropdown({ onSelect }: FilterAddDropdownProps) {
               className="flex-1 bg-transparent text-sm outline-none"
             />
           </div>
-          <div className="max-h-72 overflow-y-auto p-2">
+          <div ref={listRef} style={{ maxHeight: listMaxHeight }} className="overflow-y-auto p-2">
             {groups.length === 0 && (
               <div className="px-2 py-4 text-center text-sm text-muted-foreground">No matching fields</div>
             )}
