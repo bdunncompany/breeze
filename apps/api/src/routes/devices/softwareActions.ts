@@ -74,6 +74,18 @@ softwareActionsRoutes.post(
     if (device.status === 'decommissioned') {
       return c.json({ error: 'Cannot send commands to a decommissioned device' }, 400);
     }
+    // Version pinning is only honored by the agent's Windows update path
+    // (winget --version). updateSoftwareMacOS/updateSoftwareLinux ignore the
+    // version and always upgrade to the latest, so accepting a pin here would
+    // silently violate the intended hold. Reject it up front instead. See #993.
+    if (data.version && device.osType !== 'windows') {
+      return c.json(
+        {
+          error: `Version pinning is only supported on Windows endpoints; this device runs ${device.osType}. Resubmit without a version to upgrade to the latest available.`,
+        },
+        422
+      );
+    }
 
     const payload: Record<string, unknown> = { name: data.name, source: 'device_software_tab' };
     if (data.version) payload.version = data.version;

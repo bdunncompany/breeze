@@ -127,13 +127,14 @@ describe('device software actions routes', () => {
       );
     });
 
-    it('passes version through to the agent payload when provided', async () => {
+    it('passes version through to the agent payload on a Windows device', async () => {
       (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'device-1',
         orgId: 'org-123',
         siteId: null,
         hostname: 'host-1',
         status: 'online',
+        osType: 'windows',
       });
       queueCommandForExecutionMock.mockResolvedValue({
         command: { id: 'cmd-2', status: 'pending' },
@@ -150,6 +151,59 @@ describe('device software actions routes', () => {
         'device-1',
         'software_update',
         { name: 'Google Chrome', version: '125.0.6422.142', source: 'device_software_tab' },
+        expect.objectContaining({ userId: 'user-123' })
+      );
+    });
+
+    it.each(['macos', 'linux'])(
+      'rejects a version pin with 422 on a %s device (agent ignores it)',
+      async (osType) => {
+        (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'device-1',
+          orgId: 'org-123',
+          siteId: null,
+          hostname: 'host-1',
+          status: 'online',
+          osType,
+        });
+
+        const res = await app.request('/devices/device-1/software/update', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Google Chrome', version: '125.0.6422.142' }),
+        });
+
+        expect(res.status).toBe(422);
+        const body = await res.json();
+        expect(body.error).toContain(osType);
+        expect(queueCommandForExecutionMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it('allows a version-less update on a non-Windows device', async () => {
+      (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'device-1',
+        orgId: 'org-123',
+        siteId: null,
+        hostname: 'host-1',
+        status: 'online',
+        osType: 'macos',
+      });
+      queueCommandForExecutionMock.mockResolvedValue({
+        command: { id: 'cmd-3', status: 'sent' },
+      });
+
+      const res = await app.request('/devices/device-1/software/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Google Chrome' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(queueCommandForExecutionMock).toHaveBeenCalledWith(
+        'device-1',
+        'software_update',
+        { name: 'Google Chrome', source: 'device_software_tab' },
         expect.objectContaining({ userId: 'user-123' })
       );
     });
